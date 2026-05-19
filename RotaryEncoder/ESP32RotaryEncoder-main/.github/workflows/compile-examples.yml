@@ -1,0 +1,49 @@
+name: Compile Examples
+
+on:
+  push:
+    paths:
+      - 'src/*.h'
+      - 'src/*.cpp'
+      - 'examples/**.ino'
+  pull_request:
+    paths:
+      - 'src/*.h'
+      - 'src/*.cpp'
+      - 'examples/**.ino'
+
+jobs:
+  compile-examples:
+    runs-on: ubuntu-latest
+
+    env:
+      SKETCHES_REPORTS_PATH: sketches-reports
+
+    strategy:
+      matrix:
+        fqbn:
+          - arduino:esp32:nano_nora
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile sketches
+        uses: arduino/compile-sketches@v1.1.2
+        with:
+          fqbn: ${{ matrix.fqbn }}
+
+          sketch-paths: |
+            - examples
+
+          libraries: |
+            - source-path: ./
+
+          enable-deltas-report: false
+          sketches-report-path: ${{ env.SKETCHES_REPORTS_PATH }}
+
+      - name: Save sketches report as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SKETCHES_REPORTS_PATH }}
+          path: ${{ env.SKETCHES_REPORTS_PATH }}

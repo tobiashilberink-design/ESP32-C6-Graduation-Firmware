@@ -1,0 +1,21 @@
+# Arduino build output
+build/
+*.bin
+*.elf
+*.map
+
+# Arduino IDE temp files
+*.bak
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Nieuwe map (empty placeholder)
+Nieuwe map/
