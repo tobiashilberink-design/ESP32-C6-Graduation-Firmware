@@ -38,7 +38,7 @@ void IRAM_ATTR sw_isr(void) {
 
 Adafruit_NeoPixel ring(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-/* ── Perlin noise (1D fBm campfire) ──────────────────────────────────────── */
+/* ── Perlin noise (1D fBm campfire flicker) ──────────────────────────────── */
 static uint8_t perm[512];
 
 static void perlin_init(uint32_t seed) {
@@ -50,64 +50,70 @@ static void perlin_init(uint32_t seed) {
     }
     for (int i = 0; i < 256; i++) perm[i + 256] = perm[i];
 }
-static float perlin_fade(float t) {
-    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-}
-static float perlin_grad(int hash, float x) { return (hash & 1) ? x : -x; }
+static float perlin_fade(float t) { return t*t*t*(t*(t*6.0f-15.0f)+10.0f); }
+static float perlin_grad(int h, float x) { return (h & 1) ? x : -x; }
 static float perlin1d(float x) {
-    int   i = (int)floorf(x) & 255;
-    float f = x - floorf(x);
-    float u = perlin_fade(f);
-    return perlin_grad(perm[i], f) + u * (perlin_grad(perm[i+1], f-1.0f) - perlin_grad(perm[i], f));
+    int i = (int)floorf(x) & 255; float f = x - floorf(x);
+    return perlin_grad(perm[i], f) + perlin_fade(f) *
+           (perlin_grad(perm[i+1], f-1.0f) - perlin_grad(perm[i], f));
 }
 static float fbm(float t) {
-    float v = 0, amp = 1, freq = 1, mx = 0;
-    for (int i = 0; i < 4; i++) {
-        v += perlin1d(t * freq) * amp; mx += amp;
-        amp *= 0.5f; freq *= 2.1f;
-    }
-    return v / mx;
+    float v=0, amp=1, freq=1, mx=0;
+    for (int i=0; i<4; i++) { v+=perlin1d(t*freq)*amp; mx+=amp; amp*=0.5f; freq*=2.1f; }
+    return v/mx;
 }
 static float campfire_flicker(float t) {
-    float norm = (fbm(t * 2.5f) + 1.0f) * 0.5f;
-    return 5.0f + norm * 250.0f;
+    return 5.0f + ((fbm(t*2.5f)+1.0f)*0.5f) * 250.0f;
 }
 
-/* ── LED update — called every loop() ───────────────────────────────────── */
+/* ── LED update ──────────────────────────────────────────────────────────── */
 static void update_leds(void) {
-    if (get_active_screen() != 1) {
+    int          screen = get_active_screen();
+    wind_state_t state  = get_wind_state();
+    float        t      = millis() / 1000.0f;
+
+    /* LEDs only active on wind down screen (screen 2) */
+    if (screen != 2) {
         ring.clear();
         ring.show();
         return;
     }
 
-    float         t     = millis() / 1000.0f;
-    timer_state_t state = get_timer_state();
-    uint8_t       r     = 0;
-    bool          off   = false;
+    if (state == WIND_SELECTING) {
+        /* ── all LEDs fade in over 4 seconds from when screen was entered ── */
+        float progress = (float)(esp_timer_get_time() - get_wind_enter_us()) / 8000000.0f;
+        if (progress > 1.0f) progress = 1.0f;
+        uint8_t bri = (uint8_t)(progress * 255.0f);
+        uint32_t col = ring.Color(bri, 0, 0);
+        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(i, col);
+        ring.show();
 
-    if (state == TIMER_RUNNING) {
-        r = (uint8_t)campfire_flicker(t);
+    } else if (state == WIND_RUNNING) {
+        /* ── campfire flicker, LED count shrinks with remaining time ─────── */
+        int64_t elapsed_us  = esp_timer_get_time() - get_wind_start_us();
+        int64_t total_us    = (int64_t)get_wind_minutes() * 60LL * 1000000LL;
+        int64_t remaining_us = total_us - elapsed_us;
+        if (remaining_us < 0) remaining_us = 0;
 
-    } else if (state == TIMER_DONE) {
-        r = (millis() / 150) % 2 ? 220 : 0;
+        /* active_leds is a float: integer part = full LEDs, fraction = partial */
+        float active = (float)remaining_us / (float)total_us * (float)LED_COUNT;
+        int   n_full = (int)active;
+        float frac   = active - (float)n_full;
 
-    } else if (state == TIMER_SETTING && get_timer_minutes() > 0) {
-        /* pulse 50 %→100 % at 1/3 Hz */
-        float bri = 128.0f + 127.0f * (0.5f + 0.5f * sinf(2.0f * (float)M_PI * t / 3.0f));
-        r = (uint8_t)bri;
+        float flicker = campfire_flicker(t) / 255.0f;  /* 0..1 */
+        for (int i = 0; i < LED_COUNT; i++) {
+            float intensity = 0.0f;
+            if (i < n_full)        intensity = flicker;
+            else if (i == n_full)  intensity = flicker * frac;
+            ring.setPixelColor(i, ring.Color((uint8_t)(intensity * 255.0f), 0, 0));
+        }
+        ring.show();
 
     } else {
-        off = true;
-    }
-
-    if (off) {
+        /* WIND_DONE — all off */
         ring.clear();
-    } else {
-        uint32_t color = ring.Color(r, 0, 0);
-        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(i, color);
+        ring.show();
     }
-    ring.show();
 }
 
 /* ── setup ───────────────────────────────────────────────────────────────── */
@@ -125,7 +131,7 @@ void setup()
 
     perlin_init(esp_random());
     ring.begin();
-    ring.setBrightness(128);
+    ring.setBrightness(255);
     ring.clear();
     ring.show();
 

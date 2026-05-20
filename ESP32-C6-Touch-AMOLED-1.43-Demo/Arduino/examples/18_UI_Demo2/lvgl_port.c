@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   14_UI_Demo  —  4-screen warm-red UI with encoder + touch swipe
-   Screens:  0 Clock (analog)  |  1 Timer  |  2 Alarm  |  3 Volume
+   18_UI_Demo2  —  4-screen sleep-prep UI with encoder + touch swipe
+   Screens:  0 Clock (analog)  |  1 Sleep time  |  2 Wind-down  |  3 Volume
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #include "freertos/FreeRTOS.h"
@@ -38,17 +38,18 @@
 #define HAND_HR_LEN   85                     /* hour hand length   */
 
 /* ── app state ────────────────────────────────────────────────────────────── */
-static int  clock_h      = 12,  clock_m     = 0;
-static int  alarm_h      =  7,  alarm_m     = 0;
-static int  volume_val   = 50;
-static bool clock_edit_h = false;
-static bool alarm_edit_h = false;
-static int  active_screen = 0;
+static int  clock_total_min = 12 * 60;       /* 0-1439, displayed as H:M     */
+static int  alarm_total_min =  7 * 60;       /* 0-1439, sleep target time    */
+static int  volume_val      = 50;
+static int  active_screen   = 0;
 
-/* ── timer state ──────────────────────────────────────────────────────────── */
-static timer_state_t timer_state    = TIMER_SETTING;
-static int           timer_minutes  = 0;
-static int64_t       timer_start_us = 0;
+/* ── wind-down state ──────────────────────────────────────────────────────── */
+static wind_state_t wind_state               = WIND_SELECTING;
+static int          wind_minutes             = 10;
+static int          wind_n_lit               = 4;    /* 24 * 10/60 = 4 */
+static int64_t      wind_enter_us            = 0;
+static int64_t      wind_transition_start_us = 0;
+static int64_t      wind_start_us            = 0;
 
 /* ── LVGL handles ─────────────────────────────────────────────────────────── */
 static SemaphoreHandle_t lvgl_mux = NULL;
@@ -61,16 +62,16 @@ static lv_obj_t    *g_hour_hand;
 static lv_obj_t    *g_min_hand;
 static lv_point_t   g_hour_pts[2];
 static lv_point_t   g_min_pts[2];
-static lv_obj_t    *g_clock_edit;
 
-/* timer arc */
-static lv_obj_t *g_arc;
-static lv_obj_t *g_arc_lbl;
-static lv_obj_t *g_arc_sublbl;
+/* sleep time */
+static lv_obj_t *g_sleep_lbl;
 
-/* alarm */
-static lv_obj_t *g_alarm_lbl;
-static lv_obj_t *g_alarm_edit;
+/* wind-down screen */
+static lv_obj_t *g_wind_arc;
+static lv_obj_t *g_wind_min_lbl;
+static lv_obj_t *g_wind_min_sublbl;
+static lv_obj_t *g_wind_question;
+static lv_obj_t *g_wind_done_lbl;
 
 /* volume */
 static lv_obj_t *g_vol_arc;
@@ -94,6 +95,8 @@ static void example_lvgl_port_task(void *);
 static void create_ui(void);
 static void tileview_event_cb(lv_event_t *);
 static void update_clock_hands(void);
+static void navigate_to(int idx);
+static void reset_wind_screen(void);
 
 /* ── LCD init sequence ────────────────────────────────────────────────────── */
 static const sh8601_lcd_init_cmd_t sh8601_lcd_init_cmds[] = {
@@ -200,29 +203,34 @@ void lvgl_port_init(void)
 
 /* ── getter functions ─────────────────────────────────────────────────────── */
 
-int get_active_screen(void)  { return active_screen; }
-timer_state_t get_timer_state(void) { return timer_state; }
-int get_timer_minutes(void)  { return timer_minutes; }
+int          get_active_screen(void)            { return active_screen; }
+wind_state_t get_wind_state(void)               { return wind_state; }
+int          get_wind_minutes(void)             { return wind_minutes; }
+int          get_wind_n_lit(void)               { return wind_n_lit; }
+int64_t      get_wind_enter_us(void)            { return wind_enter_us; }
+int64_t      get_wind_transition_start_us(void) { return wind_transition_start_us; }
+int64_t      get_wind_start_us(void)            { return wind_start_us; }
 
-/* ── timer countdown tick — call from Arduino loop() ─────────────────────── */
+/* ── wind-down state machine tick — call from Arduino loop() ─────────────── */
 
 void timer_update_tick(void)
 {
-    if (timer_state != TIMER_RUNNING) return;
     if (!lvgl_mux) return;
-    if (!example_lvgl_lock(5)) return;
 
-    int64_t elapsed_sec = (esp_timer_get_time() - timer_start_us) / 1000000LL;
-    int remaining = timer_minutes - (int)(elapsed_sec / 60);
+    /* RUNNING → DONE when elapsed ≥ total */
+    if (wind_state != WIND_RUNNING) return;
 
-    if (remaining <= 0) {
-        timer_state = TIMER_DONE;
-        lv_arc_set_value(g_arc, 0);
-    } else {
-        lv_arc_set_value(g_arc, remaining);
+    int64_t elapsed = esp_timer_get_time() - wind_start_us;
+    int64_t total   = (int64_t)wind_minutes * 60LL * 1000000LL;
+
+    if (elapsed >= total) {
+        if (!example_lvgl_lock(5)) return;
+        wind_state = WIND_DONE;
+        lv_obj_clear_flag(g_wind_done_lbl, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_fade_in(g_wind_done_lbl,  2000,      0);   /* fade in over 2 s  */
+        lv_obj_fade_out(g_wind_done_lbl, 8000, 120000);   /* fade out after 2 min, over 8 s */
+        example_lvgl_unlock();
     }
-
-    example_lvgl_unlock();
 }
 
 /* ── encoder input ────────────────────────────────────────────────────────── */
@@ -234,40 +242,30 @@ void on_encoder_delta(int delta)
 
     switch (active_screen) {
 
-        case 0: /* ── Analog Clock ──────────────────────────────────────── */
-            if (clock_edit_h)
-                clock_h = ((clock_h + delta) % 24 + 24) % 24;
-            else
-                clock_m = ((clock_m + delta) % 60 + 60) % 60;
+        case 0: /* ── Analog clock — continuous 0-1439 min scroll ─────────── */
+            clock_total_min = ((clock_total_min + delta) % 1440 + 1440) % 1440;
             update_clock_hands();
             break;
 
-        case 1: /* ── Timer ─────────────────────────────────────────────── */
-            if (timer_state == TIMER_SETTING) {
-                timer_minutes += delta;
-                if (timer_minutes < 0)  timer_minutes = 0;
-                if (timer_minutes > 60) timer_minutes = 60;
-                lv_arc_set_value(g_arc, timer_minutes);
-                lv_label_set_text_fmt(g_arc_lbl, "%d", timer_minutes);
-                /* show/hide "min" sublabel */
-                if (timer_minutes > 0)
-                    lv_obj_clear_flag(g_arc_sublbl, LV_OBJ_FLAG_HIDDEN);
-                else
-                    lv_obj_add_flag(g_arc_sublbl, LV_OBJ_FLAG_HIDDEN);
+        case 1: /* ── Sleep time — continuous 0-1439 min scroll ──────────── */
+            alarm_total_min = ((alarm_total_min + delta) % 1440 + 1440) % 1440;
+            lv_label_set_text_fmt(g_sleep_lbl, "%02d:%02d",
+                alarm_total_min / 60, alarm_total_min % 60);
+            break;
+
+        case 2: /* ── Wind-down — clamp 10-60 min ─────────────────────────── */
+            if (wind_state == WIND_SELECTING) {
+                wind_minutes += delta;
+                if (wind_minutes < 10) wind_minutes = 10;
+                if (wind_minutes > 60) wind_minutes = 60;
+                lv_arc_set_value(g_wind_arc, wind_minutes);
+                lv_label_set_text_fmt(g_wind_min_lbl, "%d", wind_minutes);
             }
             break;
 
-        case 2: /* ── Alarm ─────────────────────────────────────────────── */
-            if (alarm_edit_h)
-                alarm_h = ((alarm_h + delta) % 24 + 24) % 24;
-            else
-                alarm_m = ((alarm_m + delta) % 60 + 60) % 60;
-            lv_label_set_text_fmt(g_alarm_lbl, "%02d:%02d", alarm_h, alarm_m);
-            break;
-
-        case 3: /* ── Volume ────────────────────────────────────────────── */
+        case 3: /* ── Volume — clamp 0-100 ────────────────────────────────── */
             volume_val += delta;
-            if (volume_val < 0)   volume_val = 0;
+            if (volume_val <   0) volume_val =   0;
             if (volume_val > 100) volume_val = 100;
             lv_arc_set_value(g_vol_arc, volume_val);
             lv_label_set_text_fmt(g_vol_lbl, "%d", volume_val);
@@ -282,37 +280,47 @@ void on_encoder_delta(int delta)
 void on_button_press(void)
 {
     if (!lvgl_mux) return;
+
+    /* ── 500 ms debounce — ignore accidental double-presses ─────────────── */
+    static int64_t last_btn_us = 0;
+    int64_t now_us = esp_timer_get_time();
+    if (now_us - last_btn_us < 500000LL) return;
+    last_btn_us = now_us;
+
     if (!example_lvgl_lock(10)) return;
 
     if (active_screen == 0) {
-        clock_edit_h = !clock_edit_h;
-        lv_label_set_text(g_clock_edit, clock_edit_h ? "HOURS" : "MINUTES");
-        lv_obj_set_style_text_color(g_clock_edit,
-            clock_edit_h ? C_RED : C_MID, LV_PART_MAIN);
+        /* clock → sleep time */
+        navigate_to(1);
 
     } else if (active_screen == 1) {
-        if (timer_state == TIMER_SETTING && timer_minutes > 0) {
-            /* start countdown */
-            timer_state    = TIMER_RUNNING;
-            timer_start_us = esp_timer_get_time();
-            lv_obj_add_flag(g_arc_lbl,    LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(g_arc_sublbl, LV_OBJ_FLAG_HIDDEN);
-        } else if (timer_state == TIMER_DONE) {
-            /* reset */
-            timer_state   = TIMER_SETTING;
-            timer_minutes = 0;
-            lv_arc_set_value(g_arc, 0);
-            lv_label_set_text(g_arc_lbl, "0");
-            lv_obj_clear_flag(g_arc_lbl, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(g_arc_sublbl, LV_OBJ_FLAG_HIDDEN);
-        }
+        /* sleep time → wind-down */
+        navigate_to(2);
 
     } else if (active_screen == 2) {
-        alarm_edit_h = !alarm_edit_h;
-        lv_label_set_text(g_alarm_edit, alarm_edit_h ? "HOURS" : "MINUTES");
-        lv_obj_set_style_text_color(g_alarm_edit,
-            alarm_edit_h ? C_RED : C_MID, LV_PART_MAIN);
+        if (wind_state == WIND_SELECTING) {
+            /* compute how many LEDs correspond to the chosen time */
+            wind_n_lit = (int)roundf((float)wind_minutes / 60.0f * 24.0f);
+            if (wind_n_lit > 24) wind_n_lit = 24;
+            if (wind_n_lit <  0) wind_n_lit = 0;
+
+            /* fade out UI elements over 4 s */
+            lv_obj_fade_out(g_wind_arc,        4000, 0);
+            lv_obj_fade_out(g_wind_question,   4000, 0);
+            lv_obj_fade_out(g_wind_min_lbl,    4000, 0);
+            lv_obj_fade_out(g_wind_min_sublbl, 4000, 0);
+
+            /* start countdown immediately — display fades over 4 s independently */
+            wind_state    = WIND_RUNNING;
+            wind_start_us = esp_timer_get_time();
+
+        } else if (wind_state == WIND_DONE) {
+            /* press after "Sleep well" → reset wind screen */
+            reset_wind_screen();
+        }
+        /* ignore press during TRANSITIONING or RUNNING */
     }
+    /* screen 3 (volume): button does nothing */
 
     example_lvgl_unlock();
 }
@@ -329,6 +337,62 @@ esp_err_t set_amoled_backlight(uint8_t brig)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   INTERNAL HELPERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── programmatic tileview navigation ────────────────────────────────────── */
+
+static void navigate_to(int idx)
+{
+    active_screen = idx;
+    /* Scroll the tileview directly by pixel offset — more reliable than
+       lv_obj_scroll_to_view() for programmatic navigation in LVGL8.       */
+    lv_obj_scroll_to(g_tileview, (lv_coord_t)idx * LCD_H_RES, 0, LV_ANIM_ON);
+
+    /* record wind-screen entry time */
+    if (idx == 2 && wind_state == WIND_SELECTING)
+        wind_enter_us = esp_timer_get_time();
+
+    /* update page-dot indicator */
+    for (int i = 0; i < 4; i++) {
+        if (!g_dots[i]) continue;
+        lv_obj_set_style_bg_color(g_dots[i],
+            i == idx ? C_RED : C_DIM, LV_PART_MAIN);
+    }
+}
+
+/* ── reset wind-down screen to initial SELECTING state ───────────────────── */
+
+static void reset_wind_screen(void)
+{
+    /* cancel any running fade animations */
+    lv_anim_del(g_wind_arc,        NULL);
+    lv_anim_del(g_wind_question,   NULL);
+    lv_anim_del(g_wind_min_lbl,    NULL);
+    lv_anim_del(g_wind_min_sublbl, NULL);
+    lv_anim_del(g_wind_done_lbl,   NULL);
+
+    /* restore full opacity on the selectable elements */
+    lv_obj_set_style_opa(g_wind_arc,        LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_opa(g_wind_question,   LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_opa(g_wind_min_lbl,    LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_opa(g_wind_min_sublbl, LV_OPA_COVER, LV_PART_MAIN);
+
+    /* hide & re-zero the "Sleep well" label for next run */
+    lv_obj_add_flag(g_wind_done_lbl, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(g_wind_done_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
+
+    /* reset state */
+    wind_state    = WIND_SELECTING;
+    wind_minutes  = 10;
+    wind_n_lit    = 4;
+    wind_enter_us = esp_timer_get_time();
+
+    lv_arc_set_value(g_wind_arc, 10);
+    lv_label_set_text(g_wind_min_lbl, "10");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    UI CREATION
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -340,22 +404,15 @@ static void style_tile(lv_obj_t *tile)
     lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-static lv_obj_t *make_title(lv_obj_t *parent, const char *text)
-{
-    lv_obj_t *lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(lbl, C_MID, LV_PART_MAIN);
-    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 40);
-    return lbl;
-}
-
 /* ── clock hand computation ───────────────────────────────────────────────── */
 
 static void update_clock_hands(void)
 {
+    int h24 = clock_total_min / 60;
+    int m   = clock_total_min % 60;
+
     /* minute hand */
-    float min_angle = ((float)clock_m / 60.0f) * 2.0f * (float)M_PI - (float)M_PI / 2.0f;
+    float min_angle = ((float)m / 60.0f) * 2.0f * (float)M_PI - (float)M_PI / 2.0f;
     g_min_pts[0].x = CLOCK_CX;
     g_min_pts[0].y = CLOCK_CY;
     g_min_pts[1].x = CLOCK_CX + (int)(HAND_MIN_LEN * cosf(min_angle));
@@ -363,7 +420,7 @@ static void update_clock_hands(void)
     lv_line_set_points(g_min_hand, g_min_pts, 2);
 
     /* hour hand — includes fractional hour from minutes */
-    float hour_angle = (((float)(clock_h % 12) + (float)clock_m / 60.0f) / 12.0f)
+    float hour_angle = (((float)(h24 % 12) + (float)m / 60.0f) / 12.0f)
                        * 2.0f * (float)M_PI - (float)M_PI / 2.0f;
     g_hour_pts[0].x = CLOCK_CX;
     g_hour_pts[0].y = CLOCK_CY;
@@ -372,12 +429,11 @@ static void update_clock_hands(void)
     lv_line_set_points(g_hour_hand, g_hour_pts, 2);
 }
 
-/* ── screen 0: analog clock ──────────────────────────────────────────────── */
+/* ── screen 0: analog clock (no title, no edit mode label) ──────────────── */
 
 static void create_clock_screen(lv_obj_t *tile)
 {
     style_tile(tile);
-    make_title(tile, "C L O C K");
 
     /* face circle */
     lv_obj_t *face = lv_obj_create(tile);
@@ -428,90 +484,100 @@ static void create_clock_screen(lv_obj_t *tile)
     lv_obj_align(cdot, LV_ALIGN_CENTER, 0, 0);
     lv_obj_clear_flag(cdot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
-    /* edit mode indicator */
-    g_clock_edit = lv_label_create(tile);
-    lv_label_set_text(g_clock_edit, "MINUTES");
-    lv_obj_set_style_text_font(g_clock_edit, &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_clock_edit, C_MID, LV_PART_MAIN);
-    lv_obj_align(g_clock_edit, LV_ALIGN_BOTTOM_MID, 0, -38);
-
     update_clock_hands();
 }
 
-/* ── screen 1: timer ─────────────────────────────────────────────────────── */
+/* ── screen 1: sleep time (digital, continuous scroll) ───────────────────── */
 
-static void create_arc_screen(lv_obj_t *tile)
+static void create_sleep_screen(lv_obj_t *tile)
 {
     style_tile(tile);
 
-    g_arc = lv_arc_create(tile);
-    lv_obj_set_size(g_arc, 390, 390);
-    lv_obj_center(g_arc);
-    lv_arc_set_mode(g_arc, LV_ARC_MODE_NORMAL);
-    lv_arc_set_range(g_arc, 0, 60);
-    lv_arc_set_value(g_arc, 0);
-    lv_arc_set_bg_angles(g_arc, 0, 360);
-    lv_arc_set_rotation(g_arc, 270);
+    /* small title */
+    lv_obj_t *title = lv_label_create(tile);
+    lv_label_set_text(title, "A L A R M");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, C_MID, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
 
-    lv_obj_set_style_arc_color(g_arc, C_RED,   LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(g_arc, 22,      LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(g_arc, true,  LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(g_arc, C_TRACK, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(g_arc, 22,      LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(g_arc, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(g_arc, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_set_style_pad_all(g_arc, 0, LV_PART_KNOB);
-
-    /* large minute number */
-    g_arc_lbl = lv_label_create(tile);
-    lv_label_set_text(g_arc_lbl, "0");
-    lv_obj_set_style_text_font(g_arc_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_arc_lbl, C_RED, LV_PART_MAIN);
-    lv_obj_align(g_arc_lbl, LV_ALIGN_CENTER, 0, -16);
-
-    /* "min" sublabel — hidden until minutes > 0 */
-    g_arc_sublbl = lv_label_create(tile);
-    lv_label_set_text(g_arc_sublbl, "min");
-    lv_obj_set_style_text_font(g_arc_sublbl, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_arc_sublbl, C_MID, LV_PART_MAIN);
-    lv_obj_align(g_arc_sublbl, LV_ALIGN_CENTER, 0, 28);
-    lv_obj_add_flag(g_arc_sublbl, LV_OBJ_FLAG_HIDDEN);
+    /* large digital time */
+    g_sleep_lbl = lv_label_create(tile);
+    lv_label_set_text_fmt(g_sleep_lbl, "%02d:%02d",
+        alarm_total_min / 60, alarm_total_min % 60);
+    lv_obj_set_style_text_font(g_sleep_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_sleep_lbl, C_RED, LV_PART_MAIN);
+    lv_obj_align(g_sleep_lbl, LV_ALIGN_CENTER, 0, 0);
 }
 
-/* ── screen 2: alarm ─────────────────────────────────────────────────────── */
+/* ── screen 2: wind-down ─────────────────────────────────────────────────── */
 
-static void create_alarm_screen(lv_obj_t *tile)
+static void create_wind_screen(lv_obj_t *tile)
 {
     style_tile(tile);
-    make_title(tile, "A L A R M");
 
-    g_alarm_lbl = lv_label_create(tile);
-    lv_label_set_text_fmt(g_alarm_lbl, "%02d:%02d", alarm_h, alarm_m);
-    lv_obj_set_style_text_font(g_alarm_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_alarm_lbl, C_RED, LV_PART_MAIN);
-    lv_obj_align(g_alarm_lbl, LV_ALIGN_CENTER, 0, -18);
+    /* ── question label ─── */
+    g_wind_question = lv_label_create(tile);
+    lv_label_set_text(g_wind_question, "how long do you\nwant to wind down?");
+    lv_obj_set_style_text_font(g_wind_question, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_wind_question, C_MID, LV_PART_MAIN);
+    lv_obj_set_style_text_align(g_wind_question, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(g_wind_question, LV_ALIGN_CENTER, 0, -88);
 
-    lv_obj_t *line = lv_obj_create(tile);
-    lv_obj_set_size(line, 50, 2);
-    lv_obj_set_style_bg_color(line, C_DIM, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(line, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(line, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(line, 1, LV_PART_MAIN);
-    lv_obj_align(line, LV_ALIGN_CENTER, 0, 38);
+    /* ── arc ─── */
+    g_wind_arc = lv_arc_create(tile);
+    lv_obj_set_size(g_wind_arc, 390, 390);
+    lv_obj_center(g_wind_arc);
+    lv_arc_set_mode(g_wind_arc, LV_ARC_MODE_NORMAL);
+    lv_arc_set_range(g_wind_arc, 10, 60);
+    lv_arc_set_value(g_wind_arc, 10);
+    lv_arc_set_bg_angles(g_wind_arc, 0, 360);
+    lv_arc_set_rotation(g_wind_arc, 270);
 
-    g_alarm_edit = lv_label_create(tile);
-    lv_label_set_text(g_alarm_edit, "MINUTES");
-    lv_obj_set_style_text_font(g_alarm_edit, &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_alarm_edit, C_MID, LV_PART_MAIN);
-    lv_obj_align(g_alarm_edit, LV_ALIGN_CENTER, 0, 62);
+    lv_obj_set_style_arc_color(g_wind_arc, C_RED,   LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(g_wind_arc, 22,      LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(g_wind_arc, true,  LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(g_wind_arc, C_TRACK, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(g_wind_arc, 22,      LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_wind_arc, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_wind_arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(g_wind_arc, 0, LV_PART_KNOB);
+
+    /* ── minute number ─── */
+    g_wind_min_lbl = lv_label_create(tile);
+    lv_label_set_text(g_wind_min_lbl, "10");
+    lv_obj_set_style_text_font(g_wind_min_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_wind_min_lbl, C_RED, LV_PART_MAIN);
+    lv_obj_align(g_wind_min_lbl, LV_ALIGN_CENTER, 0, -16);
+
+    /* ── "min" sublabel ─── */
+    g_wind_min_sublbl = lv_label_create(tile);
+    lv_label_set_text(g_wind_min_sublbl, "min");
+    lv_obj_set_style_text_font(g_wind_min_sublbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_wind_min_sublbl, C_MID, LV_PART_MAIN);
+    lv_obj_align(g_wind_min_sublbl, LV_ALIGN_CENTER, 0, 28);
+
+    /* ── "Sleep well" label — invisible until WIND_DONE ─── */
+    g_wind_done_lbl = lv_label_create(tile);
+    lv_label_set_text(g_wind_done_lbl, "Sleep well");
+    lv_obj_set_style_text_font(g_wind_done_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_wind_done_lbl, C_RED, LV_PART_MAIN);
+    lv_obj_align(g_wind_done_lbl, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(g_wind_done_lbl, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_opa(g_wind_done_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
 }
 
-/* ── screen 3: volume ────────────────────────────────────────────────────── */
+/* ── screen 3: volume (title centred inside arc) ─────────────────────────── */
 
 static void create_volume_screen(lv_obj_t *tile)
 {
     style_tile(tile);
-    make_title(tile, "V O L U M E");
+
+    /* title centred inside the arc gap */
+    lv_obj_t *title = lv_label_create(tile);
+    lv_label_set_text(title, "V O L U M E");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, C_MID, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -88);
 
     g_vol_arc = lv_arc_create(tile);
     lv_obj_set_size(g_vol_arc, 350, 350);
@@ -550,33 +616,23 @@ static void tileview_event_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
 
-    lv_obj_t *tv   = lv_event_get_target(e);
-    int prev       = active_screen;
-    active_screen  = lv_obj_get_scroll_x(tv) / LCD_H_RES;
+    lv_obj_t *tv  = lv_event_get_target(e);
+    int prev      = active_screen;
+    active_screen = lv_obj_get_scroll_x(tv) / LCD_H_RES;
     if (active_screen < 0) active_screen = 0;
     if (active_screen > 3) active_screen = 3;
 
-    /* reset clock/alarm edit mode on screen change */
-    clock_edit_h = alarm_edit_h = false;
-    if (g_clock_edit) {
-        lv_label_set_text(g_clock_edit, "MINUTES");
-        lv_obj_set_style_text_color(g_clock_edit, C_MID, LV_PART_MAIN);
-    }
-    if (g_alarm_edit) {
-        lv_label_set_text(g_alarm_edit, "MINUTES");
-        lv_obj_set_style_text_color(g_alarm_edit, C_MID, LV_PART_MAIN);
+    /* entering wind-down screen by swipe: record entry time */
+    if (active_screen == 2 && prev != 2 && wind_state == WIND_SELECTING)
+        wind_enter_us = esp_timer_get_time();
+
+    /* swiping away from wind-down mid-countdown: reset to SELECTING */
+    if (prev == 2 && active_screen != 2) {
+        if (wind_state == WIND_RUNNING)
+            reset_wind_screen();
     }
 
-    /* reset timer when navigating away from screen 1 */
-    if (prev == 1 && active_screen != 1) {
-        timer_state   = TIMER_SETTING;
-        timer_minutes = 0;
-        lv_arc_set_value(g_arc, 0);
-        lv_label_set_text(g_arc_lbl, "0");
-        lv_obj_clear_flag(g_arc_lbl, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(g_arc_sublbl, LV_OBJ_FLAG_HIDDEN);
-    }
-
+    /* update page-dot indicator */
     for (int i = 0; i < 4; i++) {
         if (!g_dots[i]) continue;
         lv_obj_set_style_bg_color(g_dots[i],
@@ -601,8 +657,8 @@ static void create_ui(void)
     g_tiles[3] = lv_tileview_add_tile(g_tileview, 3, 0, LV_DIR_LEFT);
 
     create_clock_screen(g_tiles[0]);
-    create_arc_screen(g_tiles[1]);
-    create_alarm_screen(g_tiles[2]);
+    create_sleep_screen(g_tiles[1]);
+    create_wind_screen(g_tiles[2]);
     create_volume_screen(g_tiles[3]);
 
     /* page dots */
