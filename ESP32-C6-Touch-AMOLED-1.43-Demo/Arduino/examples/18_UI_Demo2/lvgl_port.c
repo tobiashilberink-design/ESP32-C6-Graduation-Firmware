@@ -528,7 +528,7 @@ static void create_wind_screen(lv_obj_t *tile)
     lv_obj_set_size(g_wind_arc, 390, 390);
     lv_obj_center(g_wind_arc);
     lv_arc_set_mode(g_wind_arc, LV_ARC_MODE_NORMAL);
-    lv_arc_set_range(g_wind_arc, 10, 60);
+    lv_arc_set_range(g_wind_arc, 0, 60);   /* 0 base so 10 min = 1/6 full */
     lv_arc_set_value(g_wind_arc, 10);
     lv_arc_set_bg_angles(g_wind_arc, 0, 360);
     lv_arc_set_rotation(g_wind_arc, 270);
