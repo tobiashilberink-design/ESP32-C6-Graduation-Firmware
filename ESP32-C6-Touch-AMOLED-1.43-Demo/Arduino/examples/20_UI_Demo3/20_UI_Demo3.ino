@@ -156,6 +156,15 @@ static void update_leds(void) {
         for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
         ring.show();
 
+    /* ── Connect: very slow soft pulse 8-20 % brightness, 16 s period ────── */
+    } else if (screen == SCR_CONNECT && state == WIND_RUNNING) {
+        /* bri = 20 (8%) to 51 (20%), gentle 16 s cycle */
+        float bri_f = 20.0f + 15.5f * (1.0f + sinf(2.0f * (float)M_PI * t / 16.0f));
+        uint8_t bri = (uint8_t)bri_f;
+        uint32_t col = ring.Color(bri, 0, 0);
+        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
+        ring.show();
+
     } else {
         ring.clear(); ring.show();
     }

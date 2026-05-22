@@ -9,11 +9,12 @@
 #define SCR_GUIDE    2
 #define SCR_WIND     3
 #define SCR_HEART    4
-#define SCR_MUSIC    5
-#define SCR_PODCAST  6
-#define SCR_BGNOISE  7
-#define SCR_VOLUME   8
-#define NUM_SCREENS  9
+#define SCR_CONNECT  5
+#define SCR_MUSIC    6
+#define SCR_PODCAST  7
+#define SCR_BGNOISE  8
+#define SCR_VOLUME   9
+#define NUM_SCREENS  10
 
 /* ── wind-down state ──────────────────────────────────────────────────────── */
 typedef enum {
@@ -26,6 +27,7 @@ typedef enum {
 typedef enum {
     GUIDE_IM_GOOD = 0,
     GUIDE_HEART_COHERENCE,
+    GUIDE_CONVERSATION,
     GUIDE_BACKGROUND_NOISE,
     GUIDE_MUSIC,
     GUIDE_PODCAST,

@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   20_UI_Demo3  —  9-screen sleep-prep UI (encoder only, no touch)
+   20_UI_Demo3  —  10-screen sleep-prep UI (encoder only, no touch)
    0 Clock  |  1 Alarm  |  2 Guide  |  3 Wind timer  |  4 Heart Coherence
-   5 Music  |  6 Podcast  |  7 Background noise  |  8 Volume
+   5 Connect  |  6 Music  |  7 Podcast  |  8 Background noise  |  9 Volume
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #include "freertos/FreeRTOS.h"
@@ -46,10 +46,31 @@
 static const char *GUIDE_NAMES[GUIDE_COUNT] = {
     "Im good",
     "Heart Coherence",
+    "Connect",
     "Background noise",
     "Music",
     "Podcast"
 };
+
+/* ── conversation card deck ───────────────────────────────────────────────── */
+static const char *CONNECT_CARDS[] = {
+    "What was the best\npart of your day?",
+    "What are you looking\nforward to tomorrow?",
+    "What made you\nsmile today?",
+    "Is there anything on\nyour mind you'd like\nto share?",
+    "What are you grateful\nfor today?",
+    "What's one thing you\nappreciated about\nme today?",
+    "If today were a movie,\nwhat would it be called?",
+    "What's one thing you'd\nlike to do together soon?",
+    "What made you feel\nloved today?",
+    "What's something\nyou learned today?",
+    "What would have made\ntoday even better?",
+    "One word to describe\nyour day?",
+    "What are you leaving\nbehind as we sleep?",
+    "What do you want to\nremember about today?",
+    "Is there anything\nyou need from me\nright now?"
+};
+#define CONNECT_CARD_COUNT  ((int)(sizeof(CONNECT_CARDS) / sizeof(CONNECT_CARDS[0])))
 
 /* ── app state ────────────────────────────────────────────────────────────── */
 static int            clock_total_min = 12 * 60;
@@ -58,8 +79,9 @@ static int            volume_val      = 50;
 static int            active_screen   = 0;
 
 /* ── guide state ──────────────────────────────────────────────────────────── */
-static guide_choice_t guide_choice = GUIDE_IM_GOOD;
-static int            guide_sel    = 0;
+static guide_choice_t guide_choice      = GUIDE_IM_GOOD;
+static int            guide_sel         = 0;
+static int            connect_card_idx  = 0;
 
 /* ── wind-down state ──────────────────────────────────────────────────────── */
 static wind_state_t wind_state    = WIND_SELECTING;
@@ -100,6 +122,10 @@ static lv_obj_t    *g_breath_in_lbl;
 static lv_obj_t    *g_breath_out_lbl;
 static lv_timer_t  *g_breath_timer  = NULL;
 
+/* connect / conversation cards */
+static lv_obj_t    *g_connect_lbl;
+static lv_obj_t    *g_connect_num_lbl;
+
 /* music */
 static lv_obj_t   *g_music_dots[3];
 static lv_timer_t *g_music_timer = NULL;
@@ -132,6 +158,7 @@ static void update_guide_list_anim(void);
 static void breath_timer_cb(lv_timer_t *);
 static void music_timer_cb(lv_timer_t *);
 static void guide_anim_y_cb(void *obj, int32_t val);
+static void create_connect_screen(lv_obj_t *tile);
 
 /* ── LCD init sequence ────────────────────────────────────────────────────── */
 static const sh8601_lcd_init_cmd_t sh8601_lcd_init_cmds[] = {
@@ -295,6 +322,15 @@ void on_encoder_delta(int delta)
             update_guide_list_anim();
             break;
 
+        case SCR_CONNECT:
+            connect_card_idx += delta;
+            if (connect_card_idx < 0)                    connect_card_idx = 0;
+            if (connect_card_idx >= CONNECT_CARD_COUNT)  connect_card_idx = CONNECT_CARD_COUNT - 1;
+            lv_label_set_text(g_connect_lbl, CONNECT_CARDS[connect_card_idx]);
+            lv_label_set_text_fmt(g_connect_num_lbl, "%d / %d",
+                connect_card_idx + 1, CONNECT_CARD_COUNT);
+            break;
+
         case SCR_WIND:
             if (wind_state == WIND_SELECTING) {
                 wind_minutes += delta;
@@ -371,6 +407,13 @@ void on_button_press(void)
                     lv_timer_resume(g_breath_timer);
                     navigate_to(SCR_HEART);
                     break;
+                case GUIDE_CONVERSATION:
+                    /* reset to first card and navigate */
+                    connect_card_idx = 0;
+                    lv_label_set_text(g_connect_lbl, CONNECT_CARDS[0]);
+                    lv_label_set_text_fmt(g_connect_num_lbl, "1 / %d", CONNECT_CARD_COUNT);
+                    navigate_to(SCR_CONNECT);
+                    break;
                 case GUIDE_MUSIC:
                     navigate_to(SCR_MUSIC);
                     break;
@@ -391,8 +434,9 @@ void on_button_press(void)
             navigate_to(SCR_GUIDE);
         }
 
-    } else if (active_screen == SCR_HEART ||
-               active_screen == SCR_MUSIC ||
+    } else if (active_screen == SCR_HEART   ||
+               active_screen == SCR_CONNECT ||
+               active_screen == SCR_MUSIC   ||
                active_screen == SCR_PODCAST ||
                active_screen == SCR_BGNOISE) {
         if (wind_state == WIND_DONE) {
@@ -489,7 +533,7 @@ static void update_guide_list_anim(void)
         /* opacity by distance from selected */
         int abs_dist = dist < 0 ? -dist : dist;
         lv_opa_t opa = (abs_dist == 0) ? LV_OPA_COVER :
-                       (abs_dist == 1) ? LV_OPA_40    : LV_OPA_15;
+                       (abs_dist == 1) ? LV_OPA_40    : LV_OPA_10;
         lv_obj_set_style_opa(g_guide_items[i], opa, LV_PART_MAIN);
     }
 }
@@ -682,7 +726,7 @@ static void create_guide_screen(lv_obj_t *tile)
         /* initial opacity */
         int abs_dist = i < 0 ? -i : i;   /* dist from sel=0 */
         lv_opa_t opa = (i == 0)       ? LV_OPA_COVER :
-                       (abs_dist == 1) ? LV_OPA_40    : LV_OPA_15;
+                       (abs_dist == 1) ? LV_OPA_40    : LV_OPA_10;
         lv_obj_set_style_opa(item, opa, LV_PART_MAIN);
         g_guide_items[i] = item;
     }
@@ -760,7 +804,39 @@ static void create_heart_screen(lv_obj_t *tile)
     lv_timer_pause(g_breath_timer);
 }
 
-/* ── screen 5: music ──────────────────────────────────────────────────────── */
+/* ── screen 5: connect (conversation cards) ───────────────────────────────── */
+static void create_connect_screen(lv_obj_t *tile)
+{
+    style_tile(tile);
+
+    /* header */
+    lv_obj_t *title = lv_label_create(tile);
+    lv_label_set_text(title, "C O N N E C T");
+    lv_obj_set_style_text_font(title,  &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, C_MID,                  LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+
+    /* prompt label — wraps automatically */
+    g_connect_lbl = lv_label_create(tile);
+    lv_label_set_text(g_connect_lbl, CONNECT_CARDS[0]);
+    lv_obj_set_style_text_font(g_connect_lbl,  &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_connect_lbl, C_RED,                  LV_PART_MAIN);
+    lv_obj_set_style_text_align(g_connect_lbl, LV_TEXT_ALIGN_CENTER,   LV_PART_MAIN);
+    lv_label_set_long_mode(g_connect_lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(g_connect_lbl, 360);
+    lv_obj_align(g_connect_lbl, LV_ALIGN_CENTER, 0, 0);
+
+    /* card counter */
+    g_connect_num_lbl = lv_label_create(tile);
+    lv_label_set_text_fmt(g_connect_num_lbl, "1 / %d", CONNECT_CARD_COUNT);
+    lv_obj_set_style_text_font(g_connect_num_lbl,  &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_connect_num_lbl, C_DIM,                  LV_PART_MAIN);
+    lv_obj_align(g_connect_num_lbl, LV_ALIGN_BOTTOM_MID, 0, -60);
+
+    g_done_lbl[SCR_CONNECT] = make_done_label(tile);
+}
+
+/* ── screen 6: music ──────────────────────────────────────────────────────── */
 static void create_music_screen(lv_obj_t *tile)
 {
     style_tile(tile);
@@ -790,7 +866,7 @@ static void create_music_screen(lv_obj_t *tile)
     g_music_timer = lv_timer_create(music_timer_cb, 400, NULL);
 }
 
-/* ── screen 6: podcast ────────────────────────────────────────────────────── */
+/* ── screen 7: podcast ────────────────────────────────────────────────────── */
 static void create_podcast_screen(lv_obj_t *tile)
 {
     style_tile(tile);
@@ -810,7 +886,7 @@ static void create_podcast_screen(lv_obj_t *tile)
     g_done_lbl[SCR_PODCAST] = make_done_label(tile);
 }
 
-/* ── screen 7: background noise ───────────────────────────────────────────── */
+/* ── screen 8: background noise ───────────────────────────────────────────── */
 static void create_bgnoise_screen(lv_obj_t *tile)
 {
     style_tile(tile);
@@ -830,7 +906,7 @@ static void create_bgnoise_screen(lv_obj_t *tile)
     g_done_lbl[SCR_BGNOISE] = make_done_label(tile);
 }
 
-/* ── screen 8: volume ─────────────────────────────────────────────────────── */
+/* ── screen 9: volume ─────────────────────────────────────────────────────── */
 static void create_volume_screen(lv_obj_t *tile)
 {
     style_tile(tile);
@@ -902,22 +978,24 @@ static void create_ui(void)
     g_tiles[SCR_GUIDE]   = lv_tileview_add_tile(g_tileview, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
     g_tiles[SCR_WIND]    = lv_tileview_add_tile(g_tileview, 3, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
     g_tiles[SCR_HEART]   = lv_tileview_add_tile(g_tileview, 4, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    g_tiles[SCR_MUSIC]   = lv_tileview_add_tile(g_tileview, 5, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    g_tiles[SCR_PODCAST] = lv_tileview_add_tile(g_tileview, 6, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    g_tiles[SCR_BGNOISE] = lv_tileview_add_tile(g_tileview, 7, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    g_tiles[SCR_VOLUME]  = lv_tileview_add_tile(g_tileview, 8, 0, LV_DIR_LEFT);
+    g_tiles[SCR_CONNECT] = lv_tileview_add_tile(g_tileview, 5, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    g_tiles[SCR_MUSIC]   = lv_tileview_add_tile(g_tileview, 6, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    g_tiles[SCR_PODCAST] = lv_tileview_add_tile(g_tileview, 7, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    g_tiles[SCR_BGNOISE] = lv_tileview_add_tile(g_tileview, 8, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    g_tiles[SCR_VOLUME]  = lv_tileview_add_tile(g_tileview, 9, 0, LV_DIR_LEFT);
 
     create_clock_screen  (g_tiles[SCR_CLOCK]);
     create_alarm_screen  (g_tiles[SCR_ALARM]);
     create_guide_screen  (g_tiles[SCR_GUIDE]);
     create_wind_screen   (g_tiles[SCR_WIND]);
     create_heart_screen  (g_tiles[SCR_HEART]);
+    create_connect_screen(g_tiles[SCR_CONNECT]);
     create_music_screen  (g_tiles[SCR_MUSIC]);
     create_podcast_screen(g_tiles[SCR_PODCAST]);
     create_bgnoise_screen(g_tiles[SCR_BGNOISE]);
     create_volume_screen (g_tiles[SCR_VOLUME]);
 
-    /* page dots — 9 small dots at bottom */
+    /* page dots — 10 small dots at bottom */
     lv_obj_t *dot_row = lv_obj_create(lv_scr_act());
     lv_obj_set_style_bg_opa(dot_row, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(dot_row, 0, LV_PART_MAIN);
