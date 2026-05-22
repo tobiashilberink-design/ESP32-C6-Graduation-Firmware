@@ -35,6 +35,8 @@ void IRAM_ATTR sw_isr(void) {
 /* ── LED ring ────────────────────────────────────────────────────────────── */
 #define LED_PIN    2
 #define LED_COUNT  24
+#define LED_OFFSET 7                                        /* rotate ring 1/4 turn anti-clockwise */
+#define LED_IDX(i) (((i) + LED_OFFSET) % LED_COUNT)        /* logical → physical index */
 
 Adafruit_NeoPixel ring(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -85,7 +87,7 @@ static void update_leds(void) {
         if (progress > 1.0f) progress = 1.0f;
         uint8_t bri = (uint8_t)(progress * 255.0f);
         uint32_t col = ring.Color(bri, 0, 0);
-        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(i, col);
+        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
         ring.show();
 
     } else if (state == WIND_RUNNING) {
@@ -105,7 +107,7 @@ static void update_leds(void) {
             float intensity = 0.0f;
             if (i < n_full)        intensity = flicker;
             else if (i == n_full)  intensity = flicker * frac;
-            ring.setPixelColor(i, ring.Color((uint8_t)(intensity * 255.0f), 0, 0));
+            ring.setPixelColor(LED_IDX(i), ring.Color((uint8_t)(intensity * 255.0f), 0, 0));
         }
         ring.show();
 
