@@ -35,7 +35,7 @@ void IRAM_ATTR sw_isr(void) {
 /* ── LED ring ────────────────────────────────────────────────────────────── */
 #define LED_PIN    2
 #define LED_COUNT  24
-#define LED_OFFSET 7                                        /* rotate ring 1/4 turn anti-clockwise */
+#define LED_OFFSET 6                                        /* rotate ring 1/4 turn anti-clockwise */
 #define LED_IDX(i) (((i) + LED_OFFSET) % LED_COUNT)        /* logical → physical index */
 
 Adafruit_NeoPixel ring(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
