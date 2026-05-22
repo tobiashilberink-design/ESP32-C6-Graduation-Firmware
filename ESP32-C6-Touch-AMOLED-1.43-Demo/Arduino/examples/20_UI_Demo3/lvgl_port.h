@@ -2,6 +2,7 @@
 #define LVGL_PORT_H
 
 #include "esp_timer.h"
+#include "driver/i2c_master.h"
 
 /* ── screen indices (0-based) ─────────────────────────────────────────────── */
 #define SCR_CLOCK    0
@@ -39,6 +40,7 @@ extern "C" {
 #endif
 
 void           lvgl_port_init(void);
+void           lvgl_touch_init(i2c_master_bus_handle_t bus);
 void           on_encoder_delta(int delta);
 void           on_button_press(void);
 void           timer_update_tick(void);

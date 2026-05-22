@@ -64,6 +64,25 @@ static esp_io_expander_handle_t io_expander = NULL;
 static int16_t                 *audio_buf   = NULL;
 static float                    pink_state  = 0.0f;
 
+/* ── Audio task — runs independently, never blocks loop() ────────────────── */
+static void audio_task(void *arg)
+{
+    for (;;) {
+        if (audio_buf && playback) {
+            if (get_active_screen() == SCR_BGNOISE &&
+                get_wind_state()    == WIND_RUNNING) {
+                fill_wind_noise();
+            } else {
+                memset(audio_buf, 0, BUF_BYTES);
+                pink_state = 0.0f;   /* reset filter to avoid pop on resume */
+            }
+            esp_codec_dev_write(playback, audio_buf, BUF_BYTES);
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+}
+
 /* pink noise at 20 % volume — wind-like */
 static void fill_wind_noise(void) {
     float amp = 0.20f * 0.75f * 32767.0f;
@@ -147,10 +166,10 @@ static void update_leds(void) {
             ring.clear(); ring.show();
         }
 
-    /* ── Heart Coherence: smooth sine between 20-40 % brightness, 10 s period ── */
+    /* ── Heart Coherence: smooth sine between 5-40 % brightness, 10 s period ── */
     } else if (screen == SCR_HEART && state == WIND_RUNNING) {
-        /* bri = 51 (20%) to 102 (40%), full 10 s cycle */
-        float bri_f = 51.0f + 25.5f * (1.0f + sinf(2.0f * (float)M_PI * t / 10.0f));
+        /* bri = 13 (5%) to 102 (40%), full 10 s cycle */
+        float bri_f = 57.5f + 44.5f * sinf(2.0f * (float)M_PI * t / 10.0f);
         uint8_t bri = (uint8_t)bri_f;
         uint32_t col = ring.Color(bri, 0, 0);
         for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
@@ -217,6 +236,12 @@ void setup()
     assert(audio_buf);
     memset(audio_buf, 0, BUF_BYTES);
 
+    /* touch — shares codec I2C bus, must init after codec */
+    lvgl_touch_init(i2c_bus);
+
+    /* audio task — runs independently so loop() is never blocked by I2S */
+    xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL);
+
     /* encoder */
     pinMode(ENC_CLK, INPUT_PULLUP);
     pinMode(ENC_DT,  INPUT_PULLUP);
@@ -246,16 +271,4 @@ void loop()
 
     timer_update_tick();
     update_leds();
-
-    /* background noise audio — only when on SCR_BGNOISE and timer running */
-    if (audio_buf && playback) {
-        if (get_active_screen() == SCR_BGNOISE &&
-            get_wind_state()    == WIND_RUNNING) {
-            fill_wind_noise();
-        } else {
-            memset(audio_buf, 0, BUF_BYTES);
-            pink_state = 0.0f;   /* reset filter to avoid pop on resume */
-        }
-        esp_codec_dev_write(playback, audio_buf, BUF_BYTES);
-    }
 }

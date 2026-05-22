@@ -13,6 +13,7 @@
 #include "esp_timer.h"
 #include "user_config.h"
 #include "driver/spi_master.h"
+#include "driver/i2c_master.h"
 #include "esp_lcd_io_spi.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
@@ -139,6 +140,10 @@ static lv_obj_t *g_done_lbl[NUM_SCREENS];
 
 /* ── display handle ───────────────────────────────────────────────────────── */
 static esp_lcd_panel_io_handle_t amoled_panel_io_handle = NULL;
+static lv_disp_t                *g_disp                 = NULL;
+
+/* ── touch handle ─────────────────────────────────────────────────────────── */
+static i2c_master_dev_handle_t   disp_touch_dev_handle  = NULL;
 
 /* ── forward declarations ─────────────────────────────────────────────────── */
 static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t,
@@ -159,6 +164,7 @@ static void breath_timer_cb(lv_timer_t *);
 static void music_timer_cb(lv_timer_t *);
 static void guide_anim_y_cb(void *obj, int32_t val);
 static void create_connect_screen(lv_obj_t *tile);
+static void example_lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *);
 
 /* ── LCD init sequence ────────────────────────────────────────────────────── */
 static const sh8601_lcd_init_cmd_t sh8601_lcd_init_cmds[] = {
@@ -241,7 +247,7 @@ void lvgl_port_init(void)
     disp_drv.rounder_cb = example_lvgl_rounder_cb;
     disp_drv.draw_buf   = &disp_buf;
     disp_drv.user_data  = panel_handle;
-    lv_disp_drv_register(&disp_drv);
+    g_disp = lv_disp_drv_register(&disp_drv);
 
     esp_timer_create_args_t tick_args = {};
     tick_args.callback = &example_increase_lvgl_tick;
@@ -950,10 +956,17 @@ static void create_volume_screen(lv_obj_t *tile)
 static void tileview_event_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-    lv_obj_t *tv = lv_event_get_target(e);
-    int pos = lv_obj_get_scroll_x(tv) / LCD_H_RES;
+    lv_obj_t *tv  = lv_event_get_target(e);
+    int prev      = active_screen;
+    int pos       = lv_obj_get_scroll_x(tv) / LCD_H_RES;
     if (pos < 0) pos = 0;
     if (pos >= NUM_SCREENS) pos = NUM_SCREENS - 1;
+    active_screen = pos;
+
+    /* record entry time when swiping onto wind screen */
+    if (pos == SCR_WIND && prev != SCR_WIND && wind_state == WIND_SELECTING)
+        wind_enter_us = esp_timer_get_time();
+
     for (int i = 0; i < NUM_SCREENS; i++) {
         if (!g_dots[i]) continue;
         lv_obj_set_style_bg_color(g_dots[i],
@@ -1017,6 +1030,46 @@ static void create_ui(void)
         lv_obj_set_style_bg_opa(g_dots[i], LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_width(g_dots[i], 0, LV_PART_MAIN);
         lv_obj_clear_flag(g_dots[i], LV_OBJ_FLAG_CLICKABLE);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOUCH INPUT  (call after codec I2C bus is created)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+void lvgl_touch_init(i2c_master_bus_handle_t bus)
+{
+    i2c_device_config_t dev = {};
+    dev.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev.scl_speed_hz    = 300000;
+    dev.device_address  = DISP_TOUCH_ADDR;
+    ESP_ERROR_CHECK_WITHOUT_ABORT(
+        i2c_master_bus_add_device(bus, &dev, &disp_touch_dev_handle));
+
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type    = LV_INDEV_TYPE_POINTER;
+    indev_drv.disp    = g_disp;
+    indev_drv.read_cb = example_lvgl_touch_cb;
+    lv_indev_drv_register(&indev_drv);
+}
+
+static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
+{
+    (void)drv;
+    if (!disp_touch_dev_handle) { data->state = LV_INDEV_STATE_RELEASED; return; }
+    uint8_t cmd = 0x02, buf[5] = {0};
+    i2c_master_transmit_receive(disp_touch_dev_handle, &cmd, 1, buf, 5, 1000);
+    if (buf[0]) {
+        uint16_t x = (((uint16_t)buf[1] & 0x0f) << 8) | buf[2];
+        uint16_t y = (((uint16_t)buf[3] & 0x0f) << 8) | buf[4];
+        if (x > LCD_H_RES) x = LCD_H_RES;
+        if (y > LCD_V_RES) y = LCD_V_RES;
+        data->point.x = x;
+        data->point.y = y;
+        data->state   = LV_INDEV_STATE_PRESSED;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
     }
 }
 
