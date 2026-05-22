@@ -50,6 +50,7 @@ wind_state_t   get_wind_state(void);
 guide_choice_t get_guide_choice(void);
 int            get_wind_minutes(void);
 int            get_wind_n_lit(void);
+int            get_volume_val(void);
 int64_t        get_wind_enter_us(void);
 int64_t        get_wind_start_us(void);
 

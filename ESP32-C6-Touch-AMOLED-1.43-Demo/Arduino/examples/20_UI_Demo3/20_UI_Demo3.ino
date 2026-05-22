@@ -67,8 +67,16 @@ static float                    pink_state  = 0.0f;
 /* ── Audio task — runs independently, never blocks loop() ────────────────── */
 static void audio_task(void *arg)
 {
+    int last_vol = -1;   /* track changes so we only call set_out_vol when needed */
     for (;;) {
         if (audio_buf && playback) {
+            /* sync volume knob → codec output level */
+            int vol = get_volume_val();
+            if (vol != last_vol) {
+                esp_codec_dev_set_out_vol(playback, (float)vol);
+                last_vol = vol;
+            }
+
             if (get_active_screen() == SCR_BGNOISE &&
                 get_wind_state()    == WIND_RUNNING) {
                 fill_wind_noise();

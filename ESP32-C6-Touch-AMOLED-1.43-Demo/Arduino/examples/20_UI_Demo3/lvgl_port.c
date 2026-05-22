@@ -273,6 +273,7 @@ wind_state_t   get_wind_state(void)     { return wind_state; }
 guide_choice_t get_guide_choice(void)   { return guide_choice; }
 int            get_wind_minutes(void)   { return wind_minutes; }
 int            get_wind_n_lit(void)     { return wind_n_lit; }
+int            get_volume_val(void)     { return volume_val; }
 int64_t        get_wind_enter_us(void)  { return wind_enter_us; }
 int64_t        get_wind_start_us(void)  { return wind_start_us; }
 
@@ -766,6 +767,7 @@ static void create_wind_screen(lv_obj_t *tile)
     lv_obj_set_style_bg_opa(g_wind_arc,      LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(g_wind_arc,      LV_OPA_TRANSP, LV_PART_KNOB);
     lv_obj_set_style_pad_all(g_wind_arc,     0,             LV_PART_KNOB);
+    lv_obj_clear_flag(g_wind_arc, LV_OBJ_FLAG_CLICKABLE);
 
     g_wind_min_lbl = lv_label_create(tile);
     lv_label_set_text(g_wind_min_lbl, "10");
@@ -938,6 +940,7 @@ static void create_volume_screen(lv_obj_t *tile)
     lv_obj_set_style_bg_opa(g_vol_arc,      LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(g_vol_arc,      LV_OPA_TRANSP, LV_PART_KNOB);
     lv_obj_set_style_pad_all(g_vol_arc,     0,             LV_PART_KNOB);
+    lv_obj_clear_flag(g_vol_arc, LV_OBJ_FLAG_CLICKABLE);
 
     g_vol_lbl = lv_label_create(tile);
     lv_label_set_text_fmt(g_vol_lbl, "%d", volume_val);
