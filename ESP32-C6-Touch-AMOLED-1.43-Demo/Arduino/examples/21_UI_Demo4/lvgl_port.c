@@ -36,7 +36,7 @@
 #define PROX_TOO_CLOSE    0.20f /* > this → border starts showing             */
 #define PROX_VERY_CLOSE   0.65f /* > this → fast-flash mode                   */
 #define PROX_ALARM_BLOCK  0.25f /* rising:  alarm encoder blocks above this   */
-#define PROX_ALARM_UNBLOCK 0.12f/* falling: alarm only unblocks below this    */
+#define PROX_ALARM_UNBLOCK 0.20f/* falling: alarm only unblocks below this    */
 
 /* ── clock geometry ───────────────────────────────────────────────────────── */
 #define CLOCK_CX     (LCD_H_RES / 2)
