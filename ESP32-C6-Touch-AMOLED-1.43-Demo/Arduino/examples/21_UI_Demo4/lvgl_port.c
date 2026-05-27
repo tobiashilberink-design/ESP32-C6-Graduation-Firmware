@@ -83,6 +83,7 @@ static int            active_screen   = 0;
 /* ── guide state ──────────────────────────────────────────────────────────── */
 static guide_choice_t guide_choice      = GUIDE_IM_GOOD;
 static int            guide_sel         = 0;
+static int            guide_enc_acc     = 0;   /* accumulator: scroll 1 item per 4 pulses */
 static int            connect_card_idx  = 0;
 
 /* ── wind-down state ──────────────────────────────────────────────────────── */
@@ -326,8 +327,10 @@ void on_encoder_delta(int delta)
             break;
 
         case SCR_GUIDE:
-            guide_sel += delta;
-            if (guide_sel < 0)               guide_sel = 0;
+            guide_enc_acc += delta;
+            while (guide_enc_acc >=  4) { guide_enc_acc -= 4; guide_sel++; }
+            while (guide_enc_acc <= -4) { guide_enc_acc += 4; guide_sel--; }
+            if (guide_sel < 0)                guide_sel = 0;
             if (guide_sel >= (int)GUIDE_COUNT) guide_sel = GUIDE_COUNT - 1;
             update_guide_list_anim();
             break;
@@ -1091,6 +1094,7 @@ static void do_software_reset(void)
     alarm_total_min  =  7 * 60;
     volume_val       = 50;
     guide_sel        = 0;
+    guide_enc_acc    = 0;
     guide_choice     = GUIDE_IM_GOOD;
     connect_card_idx = 0;
 
