@@ -308,7 +308,9 @@ void lvgl_set_ble_proximity(float proximity) { g_ble_proximity = proximity; }
 /* ── CTS time sync — called once per BLE CTS write ───────────────────────── */
 void lvgl_set_cts_time(int hours, int minutes)
 {
-    if (!example_lvgl_lock(10)) return;
+    /* Called from BLE task — use a generous timeout so we don't silently bail
+       if the LVGL task happens to hold the mutex at this moment.            */
+    if (!example_lvgl_lock(200)) return;
     clock_total_min = (hours * 60 + minutes) % 1440;
     cts_sync_us     = esp_timer_get_time();
     cts_sync_min    = clock_total_min;
