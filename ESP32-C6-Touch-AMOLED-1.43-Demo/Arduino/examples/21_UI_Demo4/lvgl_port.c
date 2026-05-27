@@ -85,6 +85,7 @@ static guide_choice_t guide_choice      = GUIDE_IM_GOOD;
 static int            guide_sel         = 0;
 static int            guide_enc_acc     = 0;   /* accumulator: scroll 1 item per 4 pulses */
 static int            connect_card_idx  = 0;
+static int            connect_enc_acc   = 0;   /* accumulator: scroll 1 card per 4 pulses */
 
 /* ── wind-down state ──────────────────────────────────────────────────────── */
 static wind_state_t wind_state    = WIND_SELECTING;
@@ -336,9 +337,11 @@ void on_encoder_delta(int delta)
             break;
 
         case SCR_CONNECT:
-            connect_card_idx += delta;
-            if (connect_card_idx < 0)                    connect_card_idx = 0;
-            if (connect_card_idx >= CONNECT_CARD_COUNT)  connect_card_idx = CONNECT_CARD_COUNT - 1;
+            connect_enc_acc += delta;
+            while (connect_enc_acc >=  4) { connect_enc_acc -= 4; connect_card_idx++; }
+            while (connect_enc_acc <= -4) { connect_enc_acc += 4; connect_card_idx--; }
+            if (connect_card_idx < 0)                   connect_card_idx = 0;
+            if (connect_card_idx >= CONNECT_CARD_COUNT) connect_card_idx = CONNECT_CARD_COUNT - 1;
             lv_label_set_text(g_connect_lbl, CONNECT_CARDS[connect_card_idx]);
             lv_label_set_text_fmt(g_connect_num_lbl, "%d / %d",
                 connect_card_idx + 1, CONNECT_CARD_COUNT);
@@ -548,7 +551,7 @@ static void update_guide_list_anim(void)
         /* opacity by distance from selected */
         int abs_dist = dist < 0 ? -dist : dist;
         lv_opa_t opa = (abs_dist == 0) ? LV_OPA_COVER :
-                       (abs_dist == 1) ? LV_OPA_40    : LV_OPA_10;
+                       (abs_dist == 1) ? LV_OPA_70    : LV_OPA_40;
         lv_obj_set_style_opa(g_guide_items[i], opa, LV_PART_MAIN);
     }
 }
@@ -741,7 +744,7 @@ static void create_guide_screen(lv_obj_t *tile)
         /* initial opacity */
         int abs_dist = i < 0 ? -i : i;   /* dist from sel=0 */
         lv_opa_t opa = (i == 0)       ? LV_OPA_COVER :
-                       (abs_dist == 1) ? LV_OPA_40    : LV_OPA_10;
+                       (abs_dist == 1) ? LV_OPA_70    : LV_OPA_40;
         lv_obj_set_style_opa(item, opa, LV_PART_MAIN);
         g_guide_items[i] = item;
     }
@@ -1097,6 +1100,7 @@ static void do_software_reset(void)
     guide_enc_acc    = 0;
     guide_choice     = GUIDE_IM_GOOD;
     connect_card_idx = 0;
+    connect_enc_acc  = 0;
 
     /* ── alarm label ── */
     lv_label_set_text_fmt(g_alarm_lbl, "%02d:%02d",
