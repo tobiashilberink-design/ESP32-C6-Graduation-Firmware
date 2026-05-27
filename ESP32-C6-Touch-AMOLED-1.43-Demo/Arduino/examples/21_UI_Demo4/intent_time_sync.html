@@ -171,7 +171,14 @@
     async function syncTime() {
       if (!gattChar) return;
       try {
-        await gattChar.writeValue(buildCTSPayload());
+        const payload = buildCTSPayload();
+        /* writeValueWithResponse is the non-deprecated form; fall back to
+           writeValue for older Chrome builds */
+        if (gattChar.writeValueWithResponse) {
+          await gattChar.writeValueWithResponse(payload);
+        } else {
+          await gattChar.writeValue(payload);
+        }
         const n = new Date();
         document.getElementById('last-sync').textContent =
           'Synced at ' + pad(n.getHours()) + ':' + pad(n.getMinutes()) + ':' + pad(n.getSeconds());
@@ -196,11 +203,26 @@
         });
 
         device.addEventListener('gattserverdisconnected', onDisconnected);
-        setStatus('Connecting…');
+        setStatus('Connecting to GATT…');
 
-        const server  = await device.gatt.connect();
-        const service = await server.getPrimaryService(CTS_SERVICE);
-        gattChar      = await service.getCharacteristic(CTS_CHAR);
+        const server = await device.gatt.connect();
+        setStatus('Finding CTS service…');
+
+        let service;
+        try {
+          service = await server.getPrimaryService(CTS_SERVICE);
+        } catch (e) {
+          throw new Error('CTS service (0x1805) not found on device — ' + e.message);
+        }
+
+        setStatus('Getting characteristic…');
+        let char;
+        try {
+          char = await service.getCharacteristic(CTS_CHAR);
+        } catch (e) {
+          throw new Error('CTS characteristic (0x2A2B) not found — ' + e.message);
+        }
+        gattChar = char;
 
         setStatus('Connected', true);
         btn.textContent = 'Disconnect';

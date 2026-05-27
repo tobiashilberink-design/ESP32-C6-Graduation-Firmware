@@ -82,16 +82,25 @@ static void on_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *p
 
 /* ── CTS (Current Time Service) — phone writes 10-byte time on connect ───── */
 /*   Byte layout: year(2 LE) | month | day | hours | minutes | seconds | ...   */
+/*   NOTE: use getData() not getValue() — Arduino String truncates at 0x00,    */
+/*   which breaks hours=0 (midnight) or minutes=0.                             */
 class CTSCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pChar) override {
-        String val = pChar->getValue();
-        if (val.length() >= 6) {
-            uint8_t h = (uint8_t)val[4];
-            uint8_t m = (uint8_t)val[5];
+        uint8_t *data = pChar->getData();
+        size_t   len  = pChar->getLength();
+        Serial.printf("CTS write received: len=%d\n", (int)len);
+        if (data && len >= 6) {
+            uint8_t h = data[4];
+            uint8_t m = data[5];
+            Serial.printf("CTS raw bytes: h=%d m=%d\n", h, m);
             if (h < 24 && m < 60) {
                 lvgl_set_cts_time((int)h, (int)m);
-                Serial.printf("CTS sync: %02d:%02d\n", h, m);
+                Serial.printf("CTS synced: %02d:%02d\n", h, m);
+            } else {
+                Serial.printf("CTS invalid time values\n");
             }
+        } else {
+            Serial.printf("CTS write too short or null\n");
         }
     }
 };
