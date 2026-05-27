@@ -246,7 +246,7 @@ static void update_leds(void) {
         float t_breath = (float)(esp_timer_get_time() - get_wind_start_us()) / 1000000.0f;
         float bri_f    = 6.5f * (1.0f - cosf(2.0f * (float)M_PI * t_breath / 10.0f));  /* 0→5% */
         uint8_t r = (uint8_t)bri_f;
-        uint8_t g = (uint8_t)(bri_f * 0.35f);
+        uint8_t g = (uint8_t)(bri_f * bri_f * 0.55f / 255.0f); /* quadratic: deep red at low bri */
         for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
         ring.show();
 
@@ -255,7 +255,7 @@ static void update_leds(void) {
         /* bri = 20 (8%) to 51 (20%), gentle 16 s cycle, warm orange */
         float bri_f = 20.0f + 15.5f * (1.0f + sinf(2.0f * (float)M_PI * t / 16.0f));
         uint8_t r = (uint8_t)bri_f;
-        uint8_t g = (uint8_t)(bri_f * 0.35f);
+        uint8_t g = (uint8_t)(bri_f * bri_f * 0.55f / 255.0f); /* quadratic: red-biased at low bri */
         for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
         ring.show();
 
