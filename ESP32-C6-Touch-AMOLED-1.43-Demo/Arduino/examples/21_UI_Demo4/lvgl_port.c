@@ -33,7 +33,7 @@
 #define C_TRACK lv_color_make( 38,  9,  9)
 
 /* ── BLE proximity thresholds ─────────────────────────────────────────────── */
-#define PROX_TOO_CLOSE  0.35f   /* > this → too close (alarm blocked, border) */
+#define PROX_TOO_CLOSE  0.20f   /* > this → too close (alarm blocked, border) */
 #define PROX_VERY_CLOSE 0.65f   /* > this → very close (fast flash)           */
 
 /* ── clock geometry ───────────────────────────────────────────────────────── */
@@ -725,8 +725,8 @@ static void create_alarm_screen(lv_obj_t *tile)
     g_alarm_blocked_lbl = lv_label_create(tile);
     lv_label_set_text(g_alarm_blocked_lbl,
         "Your phone is too\nclose to set your alarm.");
-    lv_obj_set_style_text_font(g_alarm_blocked_lbl,  &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_alarm_blocked_lbl, C_MID,                  LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_alarm_blocked_lbl,  &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_alarm_blocked_lbl, C_RED,                  LV_PART_MAIN);
     lv_obj_set_style_text_align(g_alarm_blocked_lbl, LV_TEXT_ALIGN_CENTER,   LV_PART_MAIN);
     lv_obj_align(g_alarm_blocked_lbl, LV_ALIGN_CENTER, 0, 54);
     lv_obj_add_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
