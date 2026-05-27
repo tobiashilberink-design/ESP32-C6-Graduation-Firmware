@@ -453,7 +453,6 @@ void on_button_press(void)
             reset_wind_screen();
             navigate_to(SCR_GUIDE);
         }
-    }
     } else if (active_screen == SCR_RESET) {
         do_software_reset();
     }
