@@ -15,7 +15,6 @@
 #include "user_config.h"
 #include "driver/spi_master.h"
 #include "driver/i2c_master.h"
-#include "esp_system.h"
 #include "esp_lcd_io_spi.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
@@ -167,6 +166,7 @@ static void music_timer_cb(lv_timer_t *);
 static void guide_anim_y_cb(void *obj, int32_t val);
 static void create_connect_screen(lv_obj_t *tile);
 static void create_reset_screen(lv_obj_t *tile);
+static void do_software_reset(void);
 static void example_lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *);
 
 /* ── LCD init sequence ────────────────────────────────────────────────────── */
@@ -455,9 +455,7 @@ void on_button_press(void)
         }
     }
     } else if (active_screen == SCR_RESET) {
-        example_lvgl_unlock();
-        esp_restart();   /* full hardware restart */
-        return;
+        do_software_reset();
     }
     /* SCR_VOLUME: button does nothing */
 
@@ -922,13 +920,6 @@ static void create_bgnoise_screen(lv_obj_t *tile)
     g_done_lbl[SCR_BGNOISE] = make_done_label(tile);
 }
 
-/* ── reset button event ───────────────────────────────────────────────────── */
-static void reset_btn_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED)
-        esp_restart();
-}
-
 /* ── screen 10: reset ─────────────────────────────────────────────────────── */
 static void create_reset_screen(lv_obj_t *tile)
 {
@@ -950,7 +941,7 @@ static void create_reset_screen(lv_obj_t *tile)
     lv_obj_set_style_border_width(btn, 2,   LV_PART_MAIN);
     lv_obj_set_style_shadow_width(btn, 0,   LV_PART_MAIN);
     lv_obj_align(btn, LV_ALIGN_CENTER, 0, 10);
-    lv_obj_add_event_cb(btn, reset_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);   /* encoder only */
 
     lv_obj_t *lbl = lv_label_create(btn);
     lv_label_set_text(lbl, "Restart");
@@ -960,7 +951,7 @@ static void create_reset_screen(lv_obj_t *tile)
     lv_obj_center(lbl);
 
     lv_obj_t *hint = lv_label_create(tile);
-    lv_label_set_text(hint, "tap or press dial");
+    lv_label_set_text(hint, "press dial to reset");
     lv_obj_set_style_text_font(hint,  &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, C_DIM,                  LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -50);
@@ -1088,6 +1079,45 @@ static void create_ui(void)
         lv_obj_set_style_border_width(g_dots[i], 0, LV_PART_MAIN);
         lv_obj_clear_flag(g_dots[i], LV_OBJ_FLAG_CLICKABLE);
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOFTWARE RESET — restore all state to power-on defaults, go to clock
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+static void do_software_reset(void)
+{
+    /* ── state variables ── */
+    clock_total_min  = 12 * 60;
+    alarm_total_min  =  7 * 60;
+    volume_val       = 50;
+    guide_sel        = 0;
+    guide_choice     = GUIDE_IM_GOOD;
+    connect_card_idx = 0;
+
+    /* ── alarm label ── */
+    lv_label_set_text_fmt(g_alarm_lbl, "%02d:%02d",
+        alarm_total_min / 60, alarm_total_min % 60);
+
+    /* ── clock hands ── */
+    update_clock_hands();
+
+    /* ── guide list back to top ── */
+    update_guide_list_anim();
+
+    /* ── connect cards back to first ── */
+    lv_label_set_text(g_connect_lbl, CONNECT_CARDS[0]);
+    lv_label_set_text_fmt(g_connect_num_lbl, "1 / %d", CONNECT_CARD_COUNT);
+
+    /* ── volume arc + label ── */
+    lv_arc_set_value(g_vol_arc, volume_val);
+    lv_label_set_text_fmt(g_vol_lbl, "%d", volume_val);
+
+    /* ── wind-down screen (handles wind state + breath timer + done labels) ── */
+    reset_wind_screen();
+
+    /* ── back to clock ── */
+    navigate_to(SCR_CLOCK);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
