@@ -1163,55 +1163,85 @@ static void create_ui(void)
 static void prox_timer_cb(lv_timer_t *t)
 {
     (void)t;
-    float prox = g_ble_proximity;
+    float   prox   = g_ble_proximity;
+    int64_t now_us = esp_timer_get_time();
 
-    /* ── alarm blocked — hysteresis prevents flickering near the threshold ── */
-    /* block engages above PROX_ALARM_BLOCK, only releases below PROX_ALARM_UNBLOCK */
-    if (!alarm_blocked && prox > PROX_ALARM_BLOCK)  alarm_blocked = true;
-    if ( alarm_blocked && prox < PROX_ALARM_UNBLOCK) alarm_blocked = false;
+#define PROX_DEBOUNCE_US 2000000LL   /* 2 s — signal must be stable before state changes */
 
+    /* ── alarm blocked — hysteresis + 2 s debounce ─────────────────────────── */
+    /* A state change only commits after the condition holds continuously for 2 s.
+       If the signal reverts before then the pending timer resets.               */
+    {
+        static int64_t alarm_change_us = 0;
+        static bool    alarm_pending   = false;
+
+        if (!alarm_blocked) {
+            if (prox > PROX_ALARM_BLOCK) {
+                if (!alarm_pending) { alarm_pending = true; alarm_change_us = now_us; }
+                else if (now_us - alarm_change_us >= PROX_DEBOUNCE_US)
+                    { alarm_blocked = true; alarm_pending = false; }
+            } else { alarm_pending = false; }
+        } else {
+            if (prox < PROX_ALARM_UNBLOCK) {
+                if (!alarm_pending) { alarm_pending = true; alarm_change_us = now_us; }
+                else if (now_us - alarm_change_us >= PROX_DEBOUNCE_US)
+                    { alarm_blocked = false; alarm_pending = false; }
+            } else { alarm_pending = false; }
+        }
+    }
+
+    /* ── alarm label smooth fade (triggered by confirmed state change) ────── */
     if (g_alarm_blocked_lbl) {
         static bool lbl_visible = false;
         if (alarm_blocked && !lbl_visible) {
-            /* fade in */
             lv_obj_clear_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
             lv_obj_set_style_opa(g_alarm_blocked_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
             lv_obj_fade_in(g_alarm_blocked_lbl, 600, 0);
             lbl_visible = true;
         } else if (!alarm_blocked && lbl_visible) {
-            /* fade out */
             lv_obj_fade_out(g_alarm_blocked_lbl, 600, 0);
             lbl_visible = false;
         }
     }
 
-    /* ── perimeter border ── */
-    if (!g_prox_border) return;
+    /* ── perimeter border — same 2 s debounce ──────────────────────────────── */
+    {
+        static int64_t border_change_us = 0;
+        static bool    border_pending   = false;
+        static bool    border_on        = false;
 
-    if (prox <= PROX_TOO_CLOSE) {
-        lv_obj_add_flag(g_prox_border, LV_OBJ_FLAG_HIDDEN);
-        g_prox_phase = 0.0f;
-        return;
+        if (!border_on) {
+            if (prox > PROX_TOO_CLOSE) {
+                if (!border_pending) { border_pending = true; border_change_us = now_us; }
+                else if (now_us - border_change_us >= PROX_DEBOUNCE_US)
+                    { border_on = true; border_pending = false; }
+            } else { border_pending = false; }
+        } else {
+            if (prox <= PROX_TOO_CLOSE) {
+                if (!border_pending) { border_pending = true; border_change_us = now_us; }
+                else if (now_us - border_change_us >= PROX_DEBOUNCE_US)
+                    { border_on = false; border_pending = false; g_prox_phase = 0.0f; }
+            } else { border_pending = false; }
+        }
+
+        if (!g_prox_border) return;
+        if (!border_on) { lv_obj_add_flag(g_prox_border, LV_OBJ_FLAG_HIDDEN); return; }
     }
 
+    /* ── border opacity animation (only runs while border_on is confirmed) ─── */
     lv_obj_clear_flag(g_prox_border, LV_OBJ_FLAG_HIDDEN);
 
-    /* t_prox: 0 = just at threshold, 1 = maximum close */
     float t_prox = (prox - PROX_TOO_CLOSE) / (1.0f - PROX_TOO_CLOSE);
     if (t_prox > 1.0f) t_prox = 1.0f;
 
-    /* frequency ramps from 0.33 Hz (slow fade) to 2.0 Hz (abrupt flash) */
-    float freq = 0.33f + t_prox * 1.67f;
+    float freq = 0.33f + t_prox * 1.67f;   /* 0.33 → 2.0 Hz */
     g_prox_phase += 2.0f * (float)M_PI * freq * 0.030f;
     if (g_prox_phase > 2.0f * (float)M_PI) g_prox_phase -= 2.0f * (float)M_PI;
 
-    /* sharpness: low = soft sine, high = sharp top-heavy pulse */
     float raw       = (sinf(g_prox_phase) + 1.0f) * 0.5f;
-    float sharpness = 1.0f + t_prox * 3.0f;               /* 1 → 4 */
+    float sharpness = 1.0f + t_prox * 3.0f;
     float shaped    = powf(raw, sharpness);
-
-    /* opacity: 30 % at minimum, 100 % at peak */
-    uint8_t opa = (uint8_t)(76.0f + shaped * 179.0f);
+    uint8_t opa     = (uint8_t)(76.0f + shaped * 179.0f);
     lv_obj_set_style_opa(g_prox_border, opa, LV_PART_MAIN);
 }
 
