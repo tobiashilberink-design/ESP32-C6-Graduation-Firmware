@@ -238,12 +238,15 @@ static void update_leds(void) {
             ring.clear(); ring.show();
         }
 
-    /* ── Heart Coherence: breathe fully off → 40 % brightness, 10 s period ── */
+    /* ── Heart Coherence: breath-in brightens, breath-out dims, 10 s period ── */
     } else if (screen == SCR_HEART && state == WIND_RUNNING) {
-        /* bri = 0 (fully off) to 102 (40%), warm orange, full 10 s cycle */
-        float bri_f = 51.0f * (1.0f + sinf(2.0f * (float)M_PI * t / 10.0f));
+        /* Use wind_start as reference so LEDs sync with the breath text.
+           -cosine: starts at 0 (breathe-in begins), peaks at 5 s (breathe-out begins),
+           back to 0 at 10 s. Range 0 (off) → 102 (40%). */
+        float t_breath = (float)(esp_timer_get_time() - get_wind_start_us()) / 1000000.0f;
+        float bri_f    = 6.5f * (1.0f - cosf(2.0f * (float)M_PI * t_breath / 10.0f));  /* 0→5% */
         uint8_t r = (uint8_t)bri_f;
-        uint8_t g = (uint8_t)(bri_f * 0.35f);   /* consistent orange tint */
+        uint8_t g = (uint8_t)(bri_f * 0.35f);
         for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
         ring.show();
 
