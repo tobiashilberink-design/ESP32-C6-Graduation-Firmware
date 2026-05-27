@@ -33,8 +33,10 @@
 #define C_TRACK lv_color_make( 38,  9,  9)
 
 /* ── BLE proximity thresholds ─────────────────────────────────────────────── */
-#define PROX_TOO_CLOSE  0.20f   /* > this → too close (alarm blocked, border) */
-#define PROX_VERY_CLOSE 0.65f   /* > this → very close (fast flash)           */
+#define PROX_TOO_CLOSE    0.20f /* > this → border starts showing             */
+#define PROX_VERY_CLOSE   0.65f /* > this → fast-flash mode                   */
+#define PROX_ALARM_BLOCK  0.25f /* rising:  alarm encoder blocks above this   */
+#define PROX_ALARM_UNBLOCK 0.12f/* falling: alarm only unblocks below this    */
 
 /* ── clock geometry ───────────────────────────────────────────────────────── */
 #define CLOCK_CX     (LCD_H_RES / 2)
@@ -111,6 +113,7 @@ static float     g_ble_proximity     = 0.0f;
 static lv_obj_t *g_prox_border       = NULL;
 static lv_obj_t *g_alarm_blocked_lbl = NULL;
 static float     g_prox_phase        = 0.0f;
+static bool      alarm_blocked       = false;  /* hysteresis state           */
 
 /* ── LVGL handles ─────────────────────────────────────────────────────────── */
 static SemaphoreHandle_t lvgl_mux   = NULL;
@@ -380,7 +383,7 @@ void on_encoder_delta(int delta)
             break;
 
         case SCR_ALARM:
-            if (g_ble_proximity > PROX_TOO_CLOSE) break;   /* phone too close */
+            if (alarm_blocked) break;   /* phone too close — hysteresis state */
             alarm_total_min = ((alarm_total_min + delta) % 1440 + 1440) % 1440;
             lv_label_set_text_fmt(g_alarm_lbl, "%02d:%02d",
                 alarm_total_min / 60, alarm_total_min % 60);
@@ -1155,12 +1158,24 @@ static void prox_timer_cb(lv_timer_t *t)
     (void)t;
     float prox = g_ble_proximity;
 
-    /* ── alarm blocked label ── */
+    /* ── alarm blocked — hysteresis prevents flickering near the threshold ── */
+    /* block engages above PROX_ALARM_BLOCK, only releases below PROX_ALARM_UNBLOCK */
+    if (!alarm_blocked && prox > PROX_ALARM_BLOCK)  alarm_blocked = true;
+    if ( alarm_blocked && prox < PROX_ALARM_UNBLOCK) alarm_blocked = false;
+
     if (g_alarm_blocked_lbl) {
-        if (prox > PROX_TOO_CLOSE)
+        static bool lbl_visible = false;
+        if (alarm_blocked && !lbl_visible) {
+            /* fade in */
             lv_obj_clear_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
-        else
-            lv_obj_add_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_opa(g_alarm_blocked_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_fade_in(g_alarm_blocked_lbl, 600, 0);
+            lbl_visible = true;
+        } else if (!alarm_blocked && lbl_visible) {
+            /* fade out */
+            lv_obj_fade_out(g_alarm_blocked_lbl, 600, 0);
+            lbl_visible = false;
+        }
     }
 
     /* ── perimeter border ── */
