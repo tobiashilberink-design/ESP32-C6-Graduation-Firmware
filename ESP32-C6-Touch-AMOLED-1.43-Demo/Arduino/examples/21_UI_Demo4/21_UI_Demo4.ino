@@ -204,32 +204,33 @@ static void update_leds(void) {
     /* ── Wind-down timer screen (Im good) ── */
     if (screen == SCR_WIND) {
         if (state == WIND_SELECTING) {
-            /* fade all LEDs to 20 % over 8 s from screen entry */
+            /* fade all LEDs to 20 % over 8 s from screen entry — warm orange glow */
             float progress = (float)(esp_timer_get_time() - get_wind_enter_us()) / 8000000.0f;
             if (progress > 1.0f) progress = 1.0f;
-            uint8_t bri  = (uint8_t)(progress * 51.0f);   /* 51 = 20 % of 255 */
-            uint32_t col = ring.Color(bri, 0, 0);
-            for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
+            uint8_t r = (uint8_t)(progress * 51.0f);
+            uint8_t g = (uint8_t)(progress * 18.0f);   /* orange tint */
+            for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
             ring.show();
 
         } else if (state == WIND_RUNNING) {
-            /* campfire flicker, count shrinks with remaining time */
+            /* campfire flicker — fire colour: red full, green quadratic (dim=red, bright=orange) */
             int64_t elapsed_us   = esp_timer_get_time() - get_wind_start_us();
             int64_t total_us     = (int64_t)get_wind_minutes() * 60LL * 1000000LL;
             int64_t remaining_us = total_us - elapsed_us;
             if (remaining_us < 0) remaining_us = 0;
 
-            float active = (float)remaining_us / (float)total_us * (float)LED_COUNT;
-            int   n_full = (int)active;
-            float frac   = active - (float)n_full;
+            float active  = (float)remaining_us / (float)total_us * (float)LED_COUNT;
+            int   n_full  = (int)active;
+            float frac    = active - (float)n_full;
             float flicker = campfire_flicker(t) / 255.0f;
 
             for (int i = 0; i < LED_COUNT; i++) {
                 float intensity = 0.0f;
                 if (i < n_full)       intensity = flicker;
                 else if (i == n_full) intensity = flicker * frac;
-                ring.setPixelColor(LED_IDX(i),
-                    ring.Color((uint8_t)(intensity * 255.0f), 0, 0));
+                uint8_t r = (uint8_t)(intensity * 255.0f);
+                uint8_t g = (uint8_t)(intensity * intensity * 140.0f); /* orange-yellow at peak */
+                ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
             }
             ring.show();
 
@@ -237,22 +238,22 @@ static void update_leds(void) {
             ring.clear(); ring.show();
         }
 
-    /* ── Heart Coherence: smooth sine between 10-40 % brightness, 10 s period ── */
+    /* ── Heart Coherence: breathe fully off → 40 % brightness, 10 s period ── */
     } else if (screen == SCR_HEART && state == WIND_RUNNING) {
-        /* bri = 26 (10%) to 102 (40%), full 10 s cycle */
-        float bri_f = 64.0f + 38.0f * sinf(2.0f * (float)M_PI * t / 10.0f);
-        uint8_t bri = (uint8_t)bri_f;
-        uint32_t col = ring.Color(bri, 0, 0);
-        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
+        /* bri = 0 (fully off) to 102 (40%), warm orange, full 10 s cycle */
+        float bri_f = 51.0f * (1.0f + sinf(2.0f * (float)M_PI * t / 10.0f));
+        uint8_t r = (uint8_t)bri_f;
+        uint8_t g = (uint8_t)(bri_f * 0.35f);   /* consistent orange tint */
+        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
         ring.show();
 
     /* ── Connect: very slow soft pulse 8-20 % brightness, 16 s period ────── */
     } else if (screen == SCR_CONNECT && state == WIND_RUNNING) {
-        /* bri = 20 (8%) to 51 (20%), gentle 16 s cycle */
+        /* bri = 20 (8%) to 51 (20%), gentle 16 s cycle, warm orange */
         float bri_f = 20.0f + 15.5f * (1.0f + sinf(2.0f * (float)M_PI * t / 16.0f));
-        uint8_t bri = (uint8_t)bri_f;
-        uint32_t col = ring.Color(bri, 0, 0);
-        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), col);
+        uint8_t r = (uint8_t)bri_f;
+        uint8_t g = (uint8_t)(bri_f * 0.35f);
+        for (int i = 0; i < LED_COUNT; i++) ring.setPixelColor(LED_IDX(i), ring.Color(r, g, 0));
         ring.show();
 
     } else {
