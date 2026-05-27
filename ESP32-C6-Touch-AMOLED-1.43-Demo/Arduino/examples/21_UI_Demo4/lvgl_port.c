@@ -79,7 +79,7 @@ static const char *CONNECT_CARDS[] = {
 #define CONNECT_CARD_COUNT  ((int)(sizeof(CONNECT_CARDS) / sizeof(CONNECT_CARDS[0])))
 
 /* ── app state ────────────────────────────────────────────────────────────── */
-static int            clock_total_min = 12 * 60;
+static int            clock_total_min =  8 * 60;   /* default 08:00 */
 static int            alarm_total_min =  7 * 60;
 static int            volume_val      = 50;
 static int            active_screen   = 0;
@@ -97,6 +97,11 @@ static int          wind_minutes  = 10;
 static int          wind_n_lit    = 4;
 static int64_t      wind_enter_us = 0;
 static int64_t      wind_start_us = 0;
+
+/* ── Current Time Service (CTS) state ────────────────────────────────────── */
+static bool    cts_active   = false;
+static int64_t cts_sync_us  = 0;    /* esp_timer timestamp of last sync     */
+static int     cts_sync_min = 0;    /* clock_total_min value at last sync   */
 
 /* ── breath animation state ───────────────────────────────────────────────── */
 static bool          g_breath_in_phase = true;
@@ -180,6 +185,7 @@ static void create_connect_screen(lv_obj_t *tile);
 static void create_reset_screen(lv_obj_t *tile);
 static void do_software_reset(void);
 static void prox_timer_cb(lv_timer_t *);
+static void cts_clock_tick(void);
 static void example_lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *);
 
 /* ── LCD init sequence ────────────────────────────────────────────────────── */
@@ -296,10 +302,28 @@ int64_t        get_wind_start_us(void)  { return wind_start_us; }
 /* ── BLE proximity setter (called from Arduino loop at ~5 Hz) ─────────────── */
 void lvgl_set_ble_proximity(float proximity) { g_ble_proximity = proximity; }
 
+/* ── CTS time sync — called once per BLE CTS write ───────────────────────── */
+void lvgl_set_cts_time(int hours, int minutes)
+{
+    if (!example_lvgl_lock(10)) return;
+    clock_total_min = (hours * 60 + minutes) % 1440;
+    cts_sync_us     = esp_timer_get_time();
+    cts_sync_min    = clock_total_min;
+    cts_active      = true;
+    update_clock_hands();
+    example_lvgl_unlock();
+}
+
 /* ── timer tick — call from Arduino loop() ────────────────────────────────── */
 void timer_update_tick(void)
 {
-    if (!lvgl_mux || wind_state != WIND_RUNNING) return;
+    if (!lvgl_mux) return;
+
+    /* ── CTS real-time clock tick ── */
+    cts_clock_tick();
+
+    /* ── wind-down timer expiry ── */
+    if (wind_state != WIND_RUNNING) return;
 
     int64_t elapsed = esp_timer_get_time() - wind_start_us;
     int64_t total   = (int64_t)wind_minutes * 60LL * 1000000LL;
@@ -322,6 +346,21 @@ void timer_update_tick(void)
     }
 }
 
+/* advance the clock by whole elapsed minutes since the last CTS anchor */
+static void cts_clock_tick(void)
+{
+    if (!cts_active) return;
+
+    int64_t elapsed_min = (esp_timer_get_time() - cts_sync_us) / 60000000LL;
+    int new_min = (int)((cts_sync_min + elapsed_min) % 1440);
+    if (new_min == clock_total_min) return;   /* nothing to update yet */
+
+    if (!example_lvgl_lock(5)) return;
+    clock_total_min = new_min;
+    update_clock_hands();
+    example_lvgl_unlock();
+}
+
 /* ── encoder delta ────────────────────────────────────────────────────────── */
 void on_encoder_delta(int delta)
 {
@@ -332,6 +371,11 @@ void on_encoder_delta(int delta)
 
         case SCR_CLOCK:
             clock_total_min = ((clock_total_min + delta) % 1440 + 1440) % 1440;
+            if (cts_active) {
+                /* re-anchor so ticking continues from the manually-adjusted position */
+                cts_sync_us  = esp_timer_get_time();
+                cts_sync_min = clock_total_min;
+            }
             update_clock_hands();
             break;
 
@@ -1156,8 +1200,11 @@ static void prox_timer_cb(lv_timer_t *t)
 static void do_software_reset(void)
 {
     /* ── state variables ── */
-    clock_total_min  = 12 * 60;
+    clock_total_min  =  8 * 60;   /* back to 08:00 default */
     alarm_total_min  =  7 * 60;
+    cts_active       = false;     /* re-sync on next BLE CTS write */
+    cts_sync_us      = 0;
+    cts_sync_min     = 0;
     volume_val       = 50;
     guide_sel        = 0;
     guide_enc_acc    = 0;

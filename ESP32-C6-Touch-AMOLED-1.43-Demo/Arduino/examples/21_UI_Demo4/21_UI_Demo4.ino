@@ -9,6 +9,8 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEAdvertising.h>
+#include <BLECharacteristic.h>
+#include <BLE2902.h>
 #include "esp_gap_ble_api.h"
 #include "user_config.h"
 #include "lvgl_port.h"
@@ -77,6 +79,22 @@ static void on_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *p
         param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS)
         ble_raw_rssi = param->read_rssi_cmpl.rssi;
 }
+
+/* ── CTS (Current Time Service) — phone writes 10-byte time on connect ───── */
+/*   Byte layout: year(2 LE) | month | day | hours | minutes | seconds | ...   */
+class CTSCallbacks : public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pChar) override {
+        std::string val = pChar->getValue();
+        if (val.size() >= 6) {
+            uint8_t h = (uint8_t)val[4];
+            uint8_t m = (uint8_t)val[5];
+            if (h < 24 && m < 60) {
+                lvgl_set_cts_time((int)h, (int)m);
+                Serial.printf("CTS sync: %02d:%02d\n", h, m);
+            }
+        }
+    }
+};
 
 /* ── LED ring ─────────────────────────────────────────────────────────────── */
 #define LED_PIN    2
@@ -301,8 +319,21 @@ void setup()
     BLEService *pService = pServer->createService(
         "4FAFC201-1FB5-459E-8FCC-C5C9C331914B");
     pService->start();
+
+    /* Current Time Service 0x1805 — iOS writes current time on connection */
+    BLEService *pCTSService = pServer->createService(BLEUUID((uint16_t)0x1805));
+    BLECharacteristic *pCTSChar = pCTSService->createCharacteristic(
+        BLEUUID((uint16_t)0x2A2B),
+        BLECharacteristic::PROPERTY_READ  |
+        BLECharacteristic::PROPERTY_WRITE |
+        BLECharacteristic::PROPERTY_NOTIFY);
+    pCTSChar->addDescriptor(new BLE2902());
+    pCTSChar->setCallbacks(new CTSCallbacks());
+    pCTSService->start();
+
     BLEAdvertising *pAdv = BLEDevice::getAdvertising();
     pAdv->addServiceUUID("4FAFC201-1FB5-459E-8FCC-C5C9C331914B");
+    pAdv->addServiceUUID(BLEUUID((uint16_t)0x1805));   /* CTS — triggers iOS auto-sync */
     pAdv->setScanResponse(true);
     BLEDevice::startAdvertising();
     Serial.println("BLE advertising as 'Intent'");
