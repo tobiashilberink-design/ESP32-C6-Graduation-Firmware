@@ -85,7 +85,7 @@ static void on_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *p
 class CTSCallbacks : public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pChar) override {
         String val = pChar->getValue();
-        if (val.size() >= 6) {
+        if (val.length() >= 6) {
             uint8_t h = (uint8_t)val[4];
             uint8_t m = (uint8_t)val[5];
             if (h < 24 && m < 60) {
