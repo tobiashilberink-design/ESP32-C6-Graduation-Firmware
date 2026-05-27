@@ -32,6 +32,10 @@
 #define C_DIM   lv_color_make( 65, 14, 14)
 #define C_TRACK lv_color_make( 38,  9,  9)
 
+/* ── BLE proximity thresholds ─────────────────────────────────────────────── */
+#define PROX_TOO_CLOSE  0.35f   /* > this → too close (alarm blocked, border) */
+#define PROX_VERY_CLOSE 0.65f   /* > this → very close (fast flash)           */
+
 /* ── clock geometry ───────────────────────────────────────────────────────── */
 #define CLOCK_CX     (LCD_H_RES / 2)
 #define CLOCK_CY     (LCD_V_RES / 2)
@@ -96,6 +100,12 @@ static int64_t      wind_start_us = 0;
 
 /* ── breath animation state ───────────────────────────────────────────────── */
 static bool          g_breath_in_phase = true;
+
+/* ── BLE proximity state ──────────────────────────────────────────────────── */
+static float     g_ble_proximity     = 0.0f;
+static lv_obj_t *g_prox_border       = NULL;
+static lv_obj_t *g_alarm_blocked_lbl = NULL;
+static float     g_prox_phase        = 0.0f;
 
 /* ── LVGL handles ─────────────────────────────────────────────────────────── */
 static SemaphoreHandle_t lvgl_mux   = NULL;
@@ -169,6 +179,7 @@ static void guide_anim_y_cb(void *obj, int32_t val);
 static void create_connect_screen(lv_obj_t *tile);
 static void create_reset_screen(lv_obj_t *tile);
 static void do_software_reset(void);
+static void prox_timer_cb(lv_timer_t *);
 static void example_lvgl_touch_cb(lv_indev_drv_t *, lv_indev_data_t *);
 
 /* ── LCD init sequence ────────────────────────────────────────────────────── */
@@ -282,6 +293,9 @@ int            get_volume_val(void)     { return volume_val; }
 int64_t        get_wind_enter_us(void)  { return wind_enter_us; }
 int64_t        get_wind_start_us(void)  { return wind_start_us; }
 
+/* ── BLE proximity setter (called from Arduino loop at ~5 Hz) ─────────────── */
+void lvgl_set_ble_proximity(float proximity) { g_ble_proximity = proximity; }
+
 /* ── timer tick — call from Arduino loop() ────────────────────────────────── */
 void timer_update_tick(void)
 {
@@ -322,6 +336,7 @@ void on_encoder_delta(int delta)
             break;
 
         case SCR_ALARM:
+            if (g_ble_proximity > PROX_TOO_CLOSE) break;   /* phone too close */
             alarm_total_min = ((alarm_total_min + delta) % 1440 + 1440) % 1440;
             lv_label_set_text_fmt(g_alarm_lbl, "%02d:%02d",
                 alarm_total_min / 60, alarm_total_min % 60);
@@ -704,7 +719,17 @@ static void create_alarm_screen(lv_obj_t *tile)
         alarm_total_min / 60, alarm_total_min % 60);
     lv_obj_set_style_text_font(g_alarm_lbl,  &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_alarm_lbl, C_RED,                  LV_PART_MAIN);
-    lv_obj_align(g_alarm_lbl, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(g_alarm_lbl, LV_ALIGN_CENTER, 0, -20);
+
+    /* phone-too-close warning — hidden until BLE proximity > threshold */
+    g_alarm_blocked_lbl = lv_label_create(tile);
+    lv_label_set_text(g_alarm_blocked_lbl,
+        "Your phone is too\nclose to set your alarm.");
+    lv_obj_set_style_text_font(g_alarm_blocked_lbl,  &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_alarm_blocked_lbl, C_MID,                  LV_PART_MAIN);
+    lv_obj_set_style_text_align(g_alarm_blocked_lbl, LV_TEXT_ALIGN_CENTER,   LV_PART_MAIN);
+    lv_obj_align(g_alarm_blocked_lbl, LV_ALIGN_CENTER, 0, 54);
+    lv_obj_add_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* ── screen 2: guided wind-down choice ───────────────────────────────────── */
@@ -719,7 +744,7 @@ static void create_guide_screen(lv_obj_t *tile)
     lv_obj_set_style_text_color(q, C_MID,                  LV_PART_MAIN);
     lv_obj_set_style_text_align(q, LV_TEXT_ALIGN_LEFT,     LV_PART_MAIN);
     lv_obj_set_width(q, 185);
-    lv_obj_align(q, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(q, LV_ALIGN_LEFT_MID, 50, 0);
 
     /* selection highlight bar — fixed at centre of list */
     lv_obj_t *sel_bg = lv_obj_create(tile);
@@ -930,36 +955,11 @@ static void create_reset_screen(lv_obj_t *tile)
 {
     style_tile(tile);
 
-    lv_obj_t *title = lv_label_create(tile);
-    lv_label_set_text(title, "R E S E T");
-    lv_obj_set_style_text_font(title,  &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(title, C_MID,                  LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
-
-    /* large round tap button */
-    lv_obj_t *btn = lv_btn_create(tile);
-    lv_obj_set_size(btn, 180, 180);
-    lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, C_DIM,   LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, C_RED,   LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(btn, C_MID, LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 2,   LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(btn, 0,   LV_PART_MAIN);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 10);
-    lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);   /* encoder only */
-
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, "Restart");
+    lv_obj_t *lbl = lv_label_create(tile);
+    lv_label_set_text(lbl, "Press to reset");
     lv_obj_set_style_text_font(lbl,  &lv_font_montserrat_20, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, C_RED,                  LV_PART_MAIN);
-    lv_obj_set_style_text_color(lbl, lv_color_white(),       LV_STATE_PRESSED);
-    lv_obj_center(lbl);
-
-    lv_obj_t *hint = lv_label_create(tile);
-    lv_label_set_text(hint, "press dial to reset");
-    lv_obj_set_style_text_font(hint,  &lv_font_montserrat_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(hint, C_DIM,                  LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -50);
+    lv_obj_align(lbl, LV_ALIGN_CENTER, 0, 0);
 }
 
 /* ── screen 9: volume ─────────────────────────────────────────────────────── */
@@ -1084,6 +1084,69 @@ static void create_ui(void)
         lv_obj_set_style_border_width(g_dots[i], 0, LV_PART_MAIN);
         lv_obj_clear_flag(g_dots[i], LV_OBJ_FLAG_CLICKABLE);
     }
+
+    /* ── BLE proximity border — full-screen circular ring, on top of everything ── */
+    /* 466 px / 36 mm ≈ 12.9 px per mm → 12 px ≈ 1 mm border                      */
+    g_prox_border = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(g_prox_border, LCD_H_RES, LCD_V_RES);
+    lv_obj_set_pos(g_prox_border, 0, 0);
+    lv_obj_set_style_bg_opa(g_prox_border,     LV_OPA_TRANSP,    LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_prox_border, C_RED,           LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_prox_border, 12,              LV_PART_MAIN);
+    lv_obj_set_style_border_opa(g_prox_border,   LV_OPA_COVER,   LV_PART_MAIN);
+    lv_obj_set_style_radius(g_prox_border,       LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_clear_flag(g_prox_border, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(g_prox_border, LV_OBJ_FLAG_HIDDEN);   /* hidden until phone near */
+
+    /* 30 ms timer drives border opacity animation */
+    lv_timer_create(prox_timer_cb, 30, NULL);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLE PROXIMITY TIMER — runs every 30 ms, updates border + alarm label
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+static void prox_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    float prox = g_ble_proximity;
+
+    /* ── alarm blocked label ── */
+    if (g_alarm_blocked_lbl) {
+        if (prox > PROX_TOO_CLOSE)
+            lv_obj_clear_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
+        else
+            lv_obj_add_flag(g_alarm_blocked_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* ── perimeter border ── */
+    if (!g_prox_border) return;
+
+    if (prox <= PROX_TOO_CLOSE) {
+        lv_obj_add_flag(g_prox_border, LV_OBJ_FLAG_HIDDEN);
+        g_prox_phase = 0.0f;
+        return;
+    }
+
+    lv_obj_clear_flag(g_prox_border, LV_OBJ_FLAG_HIDDEN);
+
+    /* t_prox: 0 = just at threshold, 1 = maximum close */
+    float t_prox = (prox - PROX_TOO_CLOSE) / (1.0f - PROX_TOO_CLOSE);
+    if (t_prox > 1.0f) t_prox = 1.0f;
+
+    /* frequency ramps from 0.33 Hz (slow fade) to 2.0 Hz (abrupt flash) */
+    float freq = 0.33f + t_prox * 1.67f;
+    g_prox_phase += 2.0f * (float)M_PI * freq * 0.030f;
+    if (g_prox_phase > 2.0f * (float)M_PI) g_prox_phase -= 2.0f * (float)M_PI;
+
+    /* sharpness: low = soft sine, high = sharp top-heavy pulse */
+    float raw       = (sinf(g_prox_phase) + 1.0f) * 0.5f;
+    float sharpness = 1.0f + t_prox * 3.0f;               /* 1 → 4 */
+    float shaped    = powf(raw, sharpness);
+
+    /* opacity: 30 % at minimum, 100 % at peak */
+    uint8_t opa = (uint8_t)(76.0f + shaped * 179.0f);
+    lv_obj_set_style_opa(g_prox_border, opa, LV_PART_MAIN);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

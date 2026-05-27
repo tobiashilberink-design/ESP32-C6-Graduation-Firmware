@@ -45,6 +45,7 @@ void           lvgl_touch_init(i2c_master_bus_handle_t bus);
 void           on_encoder_delta(int delta);
 void           on_button_press(void);
 void           timer_update_tick(void);
+void           lvgl_set_ble_proximity(float proximity);
 
 int            get_active_screen(void);
 wind_state_t   get_wind_state(void);

@@ -6,6 +6,10 @@
 
 #include <Adafruit_NeoPixel.h>
 #include <math.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEAdvertising.h>
+#include "esp_gap_ble_api.h"
 #include "user_config.h"
 #include "lvgl_port.h"
 #include "esp_err.h"
@@ -42,6 +46,36 @@ void IRAM_ATTR sw_isr(void) {
     static uint32_t last_us = 0;
     uint32_t now = (uint32_t)esp_timer_get_time();
     if (now - last_us > 50000) { btn_flag = true; last_us = now; }
+}
+
+/* ── BLE proximity ────────────────────────────────────────────────────────── */
+#define BLE_EMA_ALPHA   0.08f
+#define BLE_RSSI_CLOSE  (-55.0f)
+#define BLE_RSSI_FAR    (-75.0f)
+
+static bool            ble_connected = false;
+static esp_bd_addr_t   ble_peer_bda  = {};
+static volatile int8_t ble_raw_rssi  = -90;
+static float           ble_ema_rssi  = -90.0f;
+
+class ProxServerCallbacks : public BLEServerCallbacks {
+    void onConnect(BLEServer *pServer, esp_ble_gatts_cb_param_t *param) override {
+        memcpy(ble_peer_bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+        ble_ema_rssi  = -90.0f;
+        ble_connected = true;
+    }
+    void onDisconnect(BLEServer *pServer) override {
+        ble_connected = false;
+        ble_raw_rssi  = -90;
+        ble_ema_rssi  = -90.0f;
+        BLEDevice::startAdvertising();
+    }
+};
+
+static void on_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+    if (event == ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT &&
+        param->read_rssi_cmpl.status == ESP_BT_STATUS_SUCCESS)
+        ble_raw_rssi = param->read_rssi_cmpl.rssi;
 }
 
 /* ── LED ring ─────────────────────────────────────────────────────────────── */
@@ -259,15 +293,30 @@ void setup()
     attachInterrupt(digitalPinToInterrupt(ENC_DT),  enc_isr, CHANGE);
     attachInterrupt(digitalPinToInterrupt(ENC_SW),  sw_isr,  FALLING);
 
+    /* BLE — advertise as "Intent", scan RSSI of connected phone */
+    BLEDevice::init("Intent");
+    BLEDevice::setCustomGapHandler(on_gap_event);
+    BLEServer *pServer = BLEDevice::createServer();
+    pServer->setCallbacks(new ProxServerCallbacks());
+    BLEService *pService = pServer->createService(
+        "4FAFC201-1FB5-459E-8FCC-C5C9C331914B");
+    pService->start();
+    BLEAdvertising *pAdv = BLEDevice::getAdvertising();
+    pAdv->addServiceUUID("4FAFC201-1FB5-459E-8FCC-C5C9C331914B");
+    pAdv->setScanResponse(true);
+    BLEDevice::startAdvertising();
+    Serial.println("BLE advertising as 'Intent'");
+
     Serial.println("21_UI_Demo4 ready");
 }
 
 /* ── loop ─────────────────────────────────────────────────────────────────── */
 void loop()
 {
-    static int32_t last_enc = 0;
-    int32_t enc = enc_pos;
+    static int32_t  last_enc    = 0;
+    static uint32_t last_ble_ms = 0;
 
+    int32_t enc = enc_pos;
     if (enc != last_enc) {
         on_encoder_delta(enc - last_enc);
         last_enc = enc;
@@ -276,6 +325,22 @@ void loop()
         btn_flag = false;
         on_button_press();
     }
+
+    /* ── BLE proximity — poll RSSI every 200 ms ── */
+    uint32_t now_ms = millis();
+    if (ble_connected && now_ms - last_ble_ms >= 200) {
+        esp_ble_gap_read_rssi(ble_peer_bda);
+        last_ble_ms = now_ms;
+    }
+    float ble_proximity = 0.0f;
+    if (ble_connected) {
+        ble_ema_rssi = BLE_EMA_ALPHA * (float)ble_raw_rssi +
+                       (1.0f - BLE_EMA_ALPHA) * ble_ema_rssi;
+        float t = (ble_ema_rssi - BLE_RSSI_FAR) /
+                  (BLE_RSSI_CLOSE - BLE_RSSI_FAR);
+        ble_proximity = (t < 0.0f) ? 0.0f : (t > 1.0f) ? 1.0f : t;
+    }
+    lvgl_set_ble_proximity(ble_proximity);
 
     timer_update_tick();
     update_leds();
