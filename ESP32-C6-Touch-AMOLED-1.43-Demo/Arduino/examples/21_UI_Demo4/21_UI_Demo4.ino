@@ -65,11 +65,13 @@ class ProxServerCallbacks : public BLEServerCallbacks {
         memcpy(ble_peer_bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
         ble_ema_rssi  = -90.0f;
         ble_connected = true;
+        lvgl_set_ble_connected(true);
     }
     void onDisconnect(BLEServer *pServer) override {
         ble_connected = false;
         ble_raw_rssi  = -90;
         ble_ema_rssi  = -90.0f;
+        lvgl_set_ble_connected(false);
         BLEDevice::startAdvertising();
     }
 };

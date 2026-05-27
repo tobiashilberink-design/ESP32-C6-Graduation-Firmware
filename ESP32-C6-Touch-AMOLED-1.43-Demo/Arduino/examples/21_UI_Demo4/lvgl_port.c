@@ -110,6 +110,7 @@ static bool          g_breath_in_phase = true;
 
 /* ── BLE proximity state ──────────────────────────────────────────────────── */
 static float     g_ble_proximity     = 0.0f;
+static bool      g_ble_connected     = false;  /* locks clock encoder        */
 static lv_obj_t *g_prox_border       = NULL;
 static lv_obj_t *g_alarm_blocked_lbl = NULL;
 static float     g_prox_phase        = 0.0f;
@@ -305,6 +306,9 @@ int64_t        get_wind_start_us(void)  { return wind_start_us; }
 /* ── BLE proximity setter (called from Arduino loop at ~5 Hz) ─────────────── */
 void lvgl_set_ble_proximity(float proximity) { g_ble_proximity = proximity; }
 
+/* ── BLE connection state (locks clock encoder when connected) ─────────────── */
+void lvgl_set_ble_connected(bool connected)  { g_ble_connected = connected; }
+
 /* ── CTS time sync — called once per BLE CTS write ───────────────────────── */
 void lvgl_set_cts_time(int hours, int minutes)
 {
@@ -375,6 +379,7 @@ void on_encoder_delta(int delta)
     switch (active_screen) {
 
         case SCR_CLOCK:
+            if (g_ble_connected) break;   /* time is synced — don't allow manual override */
             clock_total_min = ((clock_total_min + delta) % 1440 + 1440) % 1440;
             if (cts_active) {
                 /* re-anchor so ticking continues from the manually-adjusted position */

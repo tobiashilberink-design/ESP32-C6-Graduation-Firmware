@@ -46,6 +46,7 @@ void           on_encoder_delta(int delta);
 void           on_button_press(void);
 void           timer_update_tick(void);
 void           lvgl_set_ble_proximity(float proximity);
+void           lvgl_set_ble_connected(bool connected);
 void           lvgl_set_cts_time(int hours, int minutes);
 
 int            get_active_screen(void);
