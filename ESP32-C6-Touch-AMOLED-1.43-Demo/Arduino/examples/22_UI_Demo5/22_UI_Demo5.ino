@@ -16,6 +16,7 @@
 #include "lvgl_port.h"
 #include "esp_err.h"
 #include "esp_timer.h"
+#include "driver/i2c_master.h"
 
 extern "C" {
 #include "src/codec_board/codec_board.h"
@@ -23,14 +24,17 @@ extern "C" {
 #include "src/tca9554/esp_io_expander_tca9554.h"
 }
 
-/* ── Rotary encoder ───────────────────────────────────────────────────────── */
-#define ENC_CLK 15
-#define ENC_DT  16
-#define ENC_SW  17
+/* ── Dial: two hall sensors in quadrature + push button ───────────────────── */
+/*  The two KY-003 hall sensors feed the same A/B quadrature decoder a rotary
+ *  encoder uses, so direction is correct from any starting position. The push
+ *  button is on GPIO 17 and is polled. */
+#define HALL_A  15
+#define HALL_B  16
+#define BTN_PIN 17
 
-static volatile int32_t enc_pos  = 0;
-static volatile uint8_t enc_prev = 0;
-static volatile bool    btn_flag = false;
+static volatile int32_t  enc_pos    = 0;
+static volatile uint8_t  enc_prev   = 0;
+static volatile uint32_t hall_edges = 0;   /* any edge on either sensor */
 
 static const int8_t dir_table[16] = {
      0, +1, -1,  0,
@@ -40,14 +44,90 @@ static const int8_t dir_table[16] = {
 };
 
 void IRAM_ATTR enc_isr(void) {
-    uint8_t curr = (digitalRead(ENC_CLK) << 1) | digitalRead(ENC_DT);
-    enc_pos += dir_table[(enc_prev << 2) | curr];
+    hall_edges++;
+    uint8_t curr = (digitalRead(HALL_A) << 1) | digitalRead(HALL_B);
+    enc_pos -= dir_table[(enc_prev << 2) | curr];   /* '-' reverses direction */
     enc_prev = curr;
 }
-void IRAM_ATTR sw_isr(void) {
-    static uint32_t last_us = 0;
-    uint32_t now = (uint32_t)esp_timer_get_time();
-    if (now - last_us > 50000) { btn_flag = true; last_us = now; }
+
+/* Polled-debounce button — calls on_button_press() once per press (the make). */
+static void poll_button(void) {
+    static bool     confirmed = false;
+    static bool     raw_last  = false;
+    static uint32_t stable_ms = 0;
+    bool     raw = (digitalRead(BTN_PIN) == LOW);
+    uint32_t now = millis();
+    if (raw != raw_last) { raw_last = raw; stable_ms = now; return; }
+    if (now - stable_ms < 8) return;        /* wait for 8 ms of stability */
+    if (raw != confirmed) {
+        confirmed = raw;
+        if (confirmed) on_button_press();
+    }
+}
+
+/* ── Haptic engine (DRV2605L) on the shared I2C bus ───────────────────────── */
+/*  Effect 1 (Strong Click) is preloaded once; each tick is a single GO write
+ *  over the codec's shared I2C bus. Set ENABLE_HAPTIC to 0 to leave the chip
+ *  completely untouched by software (for isolating a bus problem). */
+#define ENABLE_HAPTIC 1
+#define DRV2605_ADDR  0x5A
+#define HAPTIC_EVERY  1      /* fire one click every N scroll counts (1 = every tick) */
+#define HAPTIC_EFFECT 24     /* ROM effect: 24 = Sharp Tick (short, light). Softer
+                                options: 6 = Sharp Click 30%, 7 = Soft Bump.        */
+
+static i2c_master_dev_handle_t drv_dev   = NULL;
+static bool                    haptic_ok = false;
+
+static esp_err_t drv_w(uint8_t reg, uint8_t val) {
+    uint8_t b[2] = { reg, val };
+    return i2c_master_transmit(drv_dev, b, sizeof(b), 50);
+}
+static uint8_t drv_r(uint8_t reg) {
+    uint8_t v = 0;
+    i2c_master_transmit_receive(drv_dev, &reg, 1, &v, 1, 50);
+    return v;
+}
+
+/* Load the working register configuration. Called at boot, and again to
+   self-heal if the chip ever drops out of its configured state. */
+static void haptic_config(void) {
+    drv_w(0x01, 0x00);                  /* mode: internal trigger (I2C GO)      */
+    drv_w(0x02, 0x00);                  /* RTP off                              */
+    drv_w(0x04, HAPTIC_EFFECT);         /* waveform slot 0 = short light tick    */
+    drv_w(0x05, 0);                     /* slot 1 = end of sequence             */
+    drv_w(0x0D, 0); drv_w(0x0E, 0); drv_w(0x0F, 0); drv_w(0x10, 0);
+    drv_w(0x11, 0x64);                  /* audio-to-vibe peak                   */
+    drv_w(0x1A, drv_r(0x1A) | 0x80);    /* LRA mode (set N_ERM_LRA bit)         */
+    drv_w(0x03, 6);                     /* ROM library 6 = LRA effects          */
+}
+
+static void haptic_init(i2c_master_bus_handle_t bus) {
+#if ENABLE_HAPTIC
+    /* Probe first — never add/talk to a device that isn't ACKing. */
+    if (i2c_master_probe(bus, DRV2605_ADDR, 50) != ESP_OK) return;
+
+    i2c_device_config_t dc = {};
+    dc.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dc.device_address  = DRV2605_ADDR;
+    dc.scl_speed_hz    = 100000;
+    if (i2c_master_bus_add_device(bus, &dc, &drv_dev) != ESP_OK) return;
+
+    haptic_config();
+    haptic_ok = true;
+#else
+    (void)bus;
+#endif
+}
+
+static inline void haptic_click(void) {
+    if (!haptic_ok) return;
+    /* If the GO write fails, the chip lost its state (or the bus hiccupped) —
+       re-apply the config and fire once more. This self-heals the "stops after
+       ~1 minute" problem without needing a reboot. */
+    if (drv_w(0x0C, 0x01) != ESP_OK) {
+        haptic_config();
+        drv_w(0x0C, 0x01);
+    }
 }
 
 /* ── BLE proximity ────────────────────────────────────────────────────────── */
@@ -110,7 +190,7 @@ class CTSCallbacks : public BLECharacteristicCallbacks {
 /* ── LED ring ─────────────────────────────────────────────────────────────── */
 #define LED_PIN    2
 #define LED_COUNT  24
-#define LED_OFFSET 6                                    /* 1/4 turn anti-clockwise */
+#define LED_OFFSET 4                                    /* start LED 6 more anti-clockwise */
 #define LED_IDX(i) (((i) + LED_OFFSET) % LED_COUNT)    /* logical → physical index */
 
 Adafruit_NeoPixel ring(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -267,32 +347,35 @@ static void update_leds(void) {
     wind_state_t state  = get_wind_state();
     float        t      = millis() / 1000.0f;
 
-    /* ── Priority 1: alarm ringing — slow 3 s pulse, pure red ───────────── */
+    /* ── Priority 1: alarm ringing — slow 3 s pulse, cool white/blue ─────── */
+    /* Same white/blue as the end of the pre-alarm sunrise (all channels equal;
+       WS2812B blue is efficient, so it reads slightly cool).                   */
     if (get_alarm_ringing()) {
         float t_alarm = (float)(esp_timer_get_time() - get_alarm_ringing_start_us())
                         / 1000000.0f;
         float pulse = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * t_alarm / 3.0f));
-        uint8_t r = (uint8_t)(pulse * 255.0f);
+        uint8_t w = (uint8_t)(pulse * 255.0f);
         for (int i = 0; i < LED_COUNT; i++)
-            ring.setPixelColor(LED_IDX(i), ring.Color(r, 0, 0));
+            ring.setPixelColor(LED_IDX(i), ring.Color(w, w, w));
         ring.show();
         return;
     }
 
-    /* ── Priority 2: pre-alarm brightness ramp (30 min before alarm) ─────── */
-    /* Only applies when the clock is running (cts_active implied by having a
-       set alarm time) and wind-down is not already controlling the LEDs.      */
-    if (state != WIND_RUNNING) {
+    /* ── Priority 2: pre-alarm sunrise — 30 min before alarm, CLOCK page only ─ */
+    /* Not shown on the alarm page (you'd be setting the time there). Brightens
+       from off, and the colour walks red → warm white → cool white/blue as the
+       alarm nears: red ramps first, green lags, blue lags most.                */
+    if (screen == SCR_CLOCK) {
         int alarm_min = get_alarm_total_min();
         int now_min   = get_clock_total_min();
         int diff      = (alarm_min - now_min + 1440) % 1440;   /* minutes until alarm */
         if (diff > 0 && diff <= 30) {
             float frac = 1.0f - (float)diff / 30.0f;   /* 0 at 30 min before → 1 at alarm */
-            /* 20 % max brightness; WS2812B blue is more efficient so dial it
-               back to ~60 % of R/G to produce a neutral white at low levels. */
-            uint8_t w  = (uint8_t)(frac * 102.0f);     /* 102 = 40 % of 255   */
+            uint8_t r = (uint8_t)(frac * 255.0f);              /* red leads      */
+            uint8_t g = (uint8_t)(frac * frac * 255.0f);       /* green follows  */
+            uint8_t b = (uint8_t)(frac * frac * frac * 255.0f);/* blue last → cool white */
             for (int i = 0; i < LED_COUNT; i++)
-                ring.setPixelColor(LED_IDX(i), ring.Color(w, w, (uint8_t)(w * 0.6f)));
+                ring.setPixelColor(LED_IDX(i), ring.Color(r, g, b));
             ring.show();
             return;
         }
@@ -349,7 +432,7 @@ static void update_leds(void) {
     /* ── Heart Coherence: -cosine breath pulse synced to wind_start ─────── */
     } else if (screen == SCR_HEART && state == WIND_RUNNING) {
         float t_breath = (float)(esp_timer_get_time() - get_wind_start_us()) / 1000000.0f;
-        float bri_f    = 6.5f * (1.0f - cosf(2.0f * (float)M_PI * t_breath / 10.0f));
+        float bri_f    = 26.0f * (1.0f - cosf(2.0f * (float)M_PI * t_breath / 10.0f));
         uint8_t r = (uint8_t)bri_f;
         uint8_t g = (uint8_t)(bri_f * bri_f * 0.55f / 255.0f);
         for (int i = 0; i < LED_COUNT; i++)
@@ -420,17 +503,21 @@ void setup()
     /* touch — shares codec I2C bus, must init after codec */
     lvgl_touch_init(i2c_bus);
 
+    /* haptic engine — shares the same I2C bus, init after codec owns it */
+    haptic_init(i2c_bus);
+    Serial.printf("haptic DRV2605: %s\n", haptic_ok ? "OK" : "NOT FOUND");
+
     /* audio task — runs independently so loop() is never blocked by I2S */
     xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL);
 
-    /* encoder */
-    pinMode(ENC_CLK, INPUT_PULLUP);
-    pinMode(ENC_DT,  INPUT_PULLUP);
-    pinMode(ENC_SW,  INPUT_PULLUP);
-    enc_prev = (digitalRead(ENC_CLK) << 1) | digitalRead(ENC_DT);
-    attachInterrupt(digitalPinToInterrupt(ENC_CLK), enc_isr, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ENC_DT),  enc_isr, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ENC_SW),  sw_isr,  FALLING);
+    /* dial — hall sensors (quadrature) + polled button */
+    pinMode(HALL_A,  INPUT_PULLUP);
+    pinMode(HALL_B,  INPUT_PULLUP);
+    pinMode(BTN_PIN, INPUT_PULLUP);
+    enc_prev = (digitalRead(HALL_A) << 1) | digitalRead(HALL_B);
+    attachInterrupt(digitalPinToInterrupt(HALL_A), enc_isr, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(HALL_B), enc_isr, CHANGE);
+    /* button is polled in loop() */
 
     /* BLE — advertise as "Intent", scan RSSI of connected phone */
     BLEDevice::init("Intent");
@@ -472,11 +559,16 @@ void loop()
     if (enc != last_enc) {
         on_encoder_delta(enc - last_enc);
         last_enc = enc;
+        /* haptic: only one click per HAPTIC_EVERY counts → a gentle tick, not a buzz */
+        static int32_t last_haptic_enc = 0;
+        int32_t d = enc - last_haptic_enc;
+        if (d < 0) d = -d;
+        if (d >= HAPTIC_EVERY) {
+            haptic_click();
+            last_haptic_enc = enc;
+        }
     }
-    if (btn_flag) {
-        btn_flag = false;
-        on_button_press();
-    }
+    poll_button();
 
     /* ── BLE proximity — poll RSSI every 200 ms ── */
     uint32_t now_ms = millis();

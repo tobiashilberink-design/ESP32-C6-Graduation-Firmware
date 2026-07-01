@@ -26,11 +26,11 @@
 #define LCD_BIT_PER_PIXEL 16
 
 /* ── colour palette ───────────────────────────────────────────────────────── */
-#define C_BG    lv_color_make( 15,  4,  4)
-#define C_RED   lv_color_make(220, 48, 48)
-#define C_MID   lv_color_make(140, 30, 30)
-#define C_DIM   lv_color_make( 65, 14, 14)
-#define C_TRACK lv_color_make( 38,  9,  9)
+#define C_BG    lv_color_make( 15,  5,  4)
+#define C_RED   lv_color_make(248,  88, 30)   /* warm red-orange */
+#define C_MID   lv_color_make(160,  56, 18)
+#define C_DIM   lv_color_make( 76,  26,  9)
+#define C_TRACK lv_color_make( 44,  15,  6)
 
 /* ── BLE proximity thresholds ─────────────────────────────────────────────── */
 #define PROX_TOO_CLOSE    0.20f /* > this → border starts showing             */
@@ -52,7 +52,7 @@
 #define GUIDE_LIST_CY       (LCD_V_RES / 2 - 12)   /* centre y for selected item */
 
 static const char *GUIDE_NAMES[GUIDE_COUNT] = {
-    "Im good",
+    "Normal",
     "Heart Coherence",
     "Connect",
     "Background noise",
@@ -188,6 +188,7 @@ static void navigate_to(int idx);
 static void reset_wind_screen(void);
 static void update_guide_list_anim(void);
 static void breath_timer_cb(lv_timer_t *);
+static void breath_fade(lv_obj_t *obj, bool fade_in, uint32_t dur);
 static void music_timer_cb(lv_timer_t *);
 static void guide_anim_y_cb(void *obj, int32_t val);
 static void create_connect_screen(lv_obj_t *tile);
@@ -266,11 +267,16 @@ void lvgl_port_init(void)
     lv_color_t *buf1 = heap_caps_malloc(
         LCD_H_RES * LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
     assert(buf1);
+#ifdef EXAMPLE_Rotate_90
+    /* Rotation: SINGLE buffer. Software rotation + double buffering warps,
+       because the stale second buffer is rotated against fresh content. */
+    lv_disp_draw_buf_init(&disp_buf, buf1, NULL, LCD_H_RES * LVGL_BUF_HEIGHT);
+#else
     lv_color_t *buf2 = heap_caps_malloc(
         LCD_H_RES * LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
     assert(buf2);
-
     lv_disp_draw_buf_init(&disp_buf, buf1, buf2, LCD_H_RES * LVGL_BUF_HEIGHT);
+#endif
     lv_disp_drv_init(&disp_drv);
     disp_drv.hor_res    = LCD_H_RES;
     disp_drv.ver_res    = LCD_V_RES;
@@ -278,6 +284,13 @@ void lvgl_port_init(void)
     disp_drv.rounder_cb = example_lvgl_rounder_cb;
     disp_drv.draw_buf   = &disp_buf;
     disp_drv.user_data  = panel_handle;
+#ifdef EXAMPLE_Rotate_90
+    disp_drv.sw_rotate = 1;
+    disp_drv.rotated   = LV_DISP_ROT_270;      /* 90° — toggle in user_config.h */
+    /* NOTE: do NOT set full_refresh here — its special render path skews under
+       sw_rotate. Whole-screen redraws are forced via lv_obj_invalidate() in
+       on_encoder_delta() instead, matching the (working) touch-scroll path.   */
+#endif
     g_disp = lv_disp_drv_register(&disp_drv);
 
     esp_timer_create_args_t tick_args = {};
@@ -470,6 +483,15 @@ void on_encoder_delta(int delta)
             break;
     }
 
+#ifdef EXAMPLE_Rotate_90
+    /* Force a full-screen redraw on every dial step. With software rotation,
+       redrawing only the small changed rectangle (the default partial update)
+       skews — but a whole-screen invalidate goes through the same render path
+       the touchscreen scroll uses, which rotates cleanly. Costs framerate, but
+       only while the dial is actually turning. */
+    lv_obj_invalidate(lv_scr_act());
+#endif
+
     example_lvgl_unlock();
 }
 
@@ -528,7 +550,7 @@ void on_button_press(void)
                     g_breath_in_phase = true;
                     lv_obj_set_style_opa(g_breath_in_lbl,  LV_OPA_TRANSP, LV_PART_MAIN);
                     lv_obj_set_style_opa(g_breath_out_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
-                    lv_obj_fade_in(g_breath_in_lbl, 1000, 0);
+                    breath_fade(g_breath_in_lbl, true, 1000);
                     lv_timer_reset(g_breath_timer);
                     lv_timer_resume(g_breath_timer);
                     navigate_to(SCR_HEART);
@@ -667,6 +689,43 @@ static void update_guide_list_anim(void)
     }
 }
 
+/* ── breath fade — opacity animation that also forces a full-screen redraw ──
+   The breath labels fade in/out automatically (no dial interaction), so under
+   software rotation their partial redraws would skew. This custom exec_cb sets
+   the opacity AND invalidates the whole screen each animation frame, matching
+   the clean touch-scroll render path. */
+static void breath_opa_exec_cb(void *obj, int32_t v)
+{
+#ifdef EXAMPLE_Rotate_90
+    /* Each frame would force a full-screen redraw (needed so rotation doesn't
+       skew the text). At ~60 fps that starves the lower-priority loop() that
+       drives the LED ring, making the breathing LEDs jump. Throttle to ~20 Hz:
+       smooth enough for the fade, light enough to keep the LEDs gradual. Always
+       apply the endpoints so the fade settles fully in/out. */
+    static int64_t last_us = 0;
+    int64_t now = esp_timer_get_time();
+    bool endpoint = (v <= LV_OPA_TRANSP || v >= LV_OPA_COVER);
+    if (!endpoint && (now - last_us) < 50000) return;   /* ~20 Hz */
+    last_us = now;
+#endif
+    lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, LV_PART_MAIN);
+#ifdef EXAMPLE_Rotate_90
+    lv_obj_invalidate(lv_scr_act());
+#endif
+}
+
+static void breath_fade(lv_obj_t *obj, bool fade_in, uint32_t dur)
+{
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, obj);
+    lv_anim_set_exec_cb(&a, breath_opa_exec_cb);
+    lv_anim_set_time(&a, dur);
+    lv_anim_set_values(&a, fade_in ? LV_OPA_TRANSP : LV_OPA_COVER,
+                           fade_in ? LV_OPA_COVER  : LV_OPA_TRANSP);
+    lv_anim_start(&a);
+}
+
 /* ── breath timer callback — fires every 5 s ─────────────────────────────── */
 static void breath_timer_cb(lv_timer_t *t)
 {
@@ -677,12 +736,12 @@ static void breath_timer_cb(lv_timer_t *t)
 
     if (g_breath_in_phase) {
         lv_obj_set_style_opa(g_breath_in_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_fade_in (g_breath_in_lbl,  1000, 0);
-        lv_obj_fade_out(g_breath_out_lbl, 800,  0);
+        breath_fade(g_breath_in_lbl,  true,  1000);
+        breath_fade(g_breath_out_lbl, false, 800);
     } else {
         lv_obj_set_style_opa(g_breath_out_lbl, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_fade_in (g_breath_out_lbl, 1000, 0);
-        lv_obj_fade_out(g_breath_in_lbl,  800,  0);
+        breath_fade(g_breath_out_lbl, true,  1000);
+        breath_fade(g_breath_in_lbl,  false, 800);
     }
 }
 
@@ -835,8 +894,8 @@ static void create_guide_screen(lv_obj_t *tile)
 
     /* question text — left half */
     lv_obj_t *q = lv_label_create(tile);
-    lv_label_set_text(q, "Do you want a\nguided\nwind down?");
-    lv_obj_set_style_text_font(q,  &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_label_set_text(q, "How do you\nwant to\nUnwind today?");
+    lv_obj_set_style_text_font(q,  &lv_font_montserrat_20, LV_PART_MAIN);
     lv_obj_set_style_text_color(q, C_MID,                  LV_PART_MAIN);
     lv_obj_set_style_text_align(q, LV_TEXT_ALIGN_LEFT,     LV_PART_MAIN);
     lv_obj_set_width(q, 185);

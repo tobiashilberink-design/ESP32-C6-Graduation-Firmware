@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mockup",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5500", "--directory", "ESP32-C6-Touch-AMOLED-1.43-Demo/Arduino/examples/21_UI_Demo4"],
+      "port": 5500
+    }
+  ]
+}

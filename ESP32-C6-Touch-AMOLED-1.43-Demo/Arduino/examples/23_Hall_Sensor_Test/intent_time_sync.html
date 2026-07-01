@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Intent — Time Sync</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.4rem;
+      background: #0f0404;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #dc3030;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1rem;
+      font-weight: 400;
+      letter-spacing: 0.35em;
+      color: #8c1e1e;
+    }
+
+    #clock {
+      font-size: 4rem;
+      font-weight: 200;
+      letter-spacing: 0.05em;
+      line-height: 1;
+    }
+
+    #status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.95rem;
+      color: #8c1e1e;
+      min-height: 1.4rem;
+      text-align: center;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #411e1e;
+      flex-shrink: 0;
+      transition: background 0.4s;
+    }
+    .dot.on { background: #dc3030; }
+
+    #btn {
+      padding: 0.75em 2.4em;
+      font-size: 0.95rem;
+      letter-spacing: 0.12em;
+      background: transparent;
+      border: 1.5px solid #dc3030;
+      color: #dc3030;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, opacity 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #btn:active  { background: #dc3030; color: #0f0404; }
+    #btn:disabled { opacity: 0.25; cursor: default; }
+
+    #last-sync {
+      font-size: 0.75rem;
+      color: #411e1e;
+      min-height: 1rem;
+      letter-spacing: 0.05em;
+    }
+
+    #error {
+      font-size: 0.8rem;
+      color: #8c1e1e;
+      text-align: center;
+      max-width: 280px;
+      display: none;
+    }
+
+    #no-ble {
+      font-size: 0.85rem;
+      color: #8c1e1e;
+      text-align: center;
+      max-width: 300px;
+      line-height: 1.6;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>I N T E N T</h1>
+
+  <div id="clock">--:--</div>
+
+  <div id="status">
+    <span class="dot" id="dot"></span>
+    <span id="status-text">Not connected</span>
+  </div>
+
+  <button id="btn" onclick="connect()">Connect</button>
+
+  <div id="last-sync"></div>
+  <div id="error"></div>
+  <div id="no-ble">
+    Web Bluetooth is not available.<br>
+    Open this page in <strong>Chrome</strong> on Android<br>
+    (not Samsung Internet or Firefox).
+  </div>
+
+  <script>
+    /* ── BLE constants ─────────────────────────────────────────────────────── */
+    const CTS_SERVICE = 0x1805;   // Current Time Service
+    const CTS_CHAR    = 0x2A2B;   // Current Time characteristic
+
+    /* ── state ─────────────────────────────────────────────────────────────── */
+    let device    = null;
+    let gattChar  = null;
+    let syncTimer = null;
+
+    /* ── live clock display ─────────────────────────────────────────────────── */
+    setInterval(() => {
+      const n = new Date();
+      document.getElementById('clock').textContent =
+        pad(n.getHours()) + ':' + pad(n.getMinutes());
+    }, 1000);
+
+    /* ── check Web Bluetooth availability ──────────────────────────────────── */
+    if (!navigator.bluetooth) {
+      document.getElementById('btn').style.display    = 'none';
+      document.getElementById('no-ble').style.display = 'block';
+    }
+
+    /* ── helpers ────────────────────────────────────────────────────────────── */
+    function pad(n) { return String(n).padStart(2, '0'); }
+
+    function buildCTSPayload() {
+      const n   = new Date();
+      const buf = new DataView(new ArrayBuffer(10));
+      buf.setUint16(0, n.getFullYear(), /*LE=*/true);
+      buf.setUint8(2, n.getMonth() + 1);           // month: 1–12
+      buf.setUint8(3, n.getDate());                 // day:   1–31
+      buf.setUint8(4, n.getHours());                // hours: 0–23
+      buf.setUint8(5, n.getMinutes());              // minutes
+      buf.setUint8(6, n.getSeconds());              // seconds
+      buf.setUint8(7, (n.getDay() + 6) % 7 + 1);  // day-of-week: Mon=1 … Sun=7
+      buf.setUint8(8, 0);                           // fractions256
+      buf.setUint8(9, 0);                           // adjust reason
+      return buf.buffer;
+    }
+
+    function setStatus(msg, connected = false) {
+      document.getElementById('status-text').textContent = msg;
+      document.getElementById('dot').className = 'dot' + (connected ? ' on' : '');
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg;
+      el.style.display = msg ? 'block' : 'none';
+    }
+
+    /* ── sync ───────────────────────────────────────────────────────────────── */
+    async function syncTime() {
+      if (!gattChar) return;
+      try {
+        const payload = buildCTSPayload();
+        /* writeValueWithResponse is the non-deprecated form; fall back to
+           writeValue for older Chrome builds */
+        if (gattChar.writeValueWithResponse) {
+          await gattChar.writeValueWithResponse(payload);
+        } else {
+          await gattChar.writeValue(payload);
+        }
+        const n = new Date();
+        document.getElementById('last-sync').textContent =
+          'Synced at ' + pad(n.getHours()) + ':' + pad(n.getMinutes()) + ':' + pad(n.getSeconds());
+        showError('');
+      } catch (e) {
+        showError('Sync error: ' + e.message);
+      }
+    }
+
+    /* ── connect ────────────────────────────────────────────────────────────── */
+    async function connect() {
+      const btn = document.getElementById('btn');
+      btn.disabled = true;
+      showError('');
+
+      try {
+        setStatus('Scanning…');
+
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'Intent' }],
+          optionalServices: [CTS_SERVICE]
+        });
+
+        device.addEventListener('gattserverdisconnected', onDisconnected);
+        setStatus('Connecting to GATT…');
+
+        const server = await device.gatt.connect();
+        setStatus('Finding CTS service…');
+
+        let service;
+        try {
+          service = await server.getPrimaryService(CTS_SERVICE);
+        } catch (e) {
+          throw new Error('CTS service (0x1805) not found on device — ' + e.message);
+        }
+
+        setStatus('Getting characteristic…');
+        let char;
+        try {
+          char = await service.getCharacteristic(CTS_CHAR);
+        } catch (e) {
+          throw new Error('CTS characteristic (0x2A2B) not found — ' + e.message);
+        }
+        gattChar = char;
+
+        setStatus('Connected', true);
+        btn.textContent = 'Disconnect';
+        btn.onclick     = disconnect;
+        btn.disabled    = false;
+
+        // sync immediately, then every 30 s (covers clock advancing while connected)
+        await syncTime();
+        syncTimer = setInterval(syncTime, 30_000);
+
+      } catch (e) {
+        if (e.name !== 'NotFoundError') {   // user cancelled — no error needed
+          showError(e.message);
+        }
+        setStatus('Not connected');
+        btn.textContent = 'Connect';
+        btn.onclick     = connect;
+        btn.disabled    = false;
+      }
+    }
+
+    /* ── disconnect ─────────────────────────────────────────────────────────── */
+    function disconnect() {
+      if (device && device.gatt.connected) device.gatt.disconnect();
+    }
+
+    function onDisconnected() {
+      gattChar = null;
+      clearInterval(syncTimer);
+      setStatus('Disconnected');
+      document.getElementById('last-sync').textContent = '';
+      const btn = document.getElementById('btn');
+      btn.textContent = 'Connect';
+      btn.onclick     = connect;
+      btn.disabled    = false;
+    }
+  </script>
+
+</body>
+</html>

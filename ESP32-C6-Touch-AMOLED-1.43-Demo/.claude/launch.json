@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mockup",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "5500", "Arduino/examples/21_UI_Demo4"],
+      "port": 5500
+    }
+  ]
+}

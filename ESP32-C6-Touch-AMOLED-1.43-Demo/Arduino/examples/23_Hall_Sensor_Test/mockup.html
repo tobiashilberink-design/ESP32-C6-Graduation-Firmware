@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Intent — Screen Mockups</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+    gap: 48px;
+    font-family: 'Montserrat', sans-serif;
+  }
+
+  h2 {
+    color: #555;
+    font-size: 0.8rem;
+    letter-spacing: 0.2em;
+    font-weight: 400;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+
+  /* ── Device shell ─────────────────────────────────────────────── */
+  .device-wrap { display: flex; flex-direction: column; align-items: center; }
+
+  .device {
+    width: 466px;
+    height: 466px;
+    border-radius: 50%;
+    overflow: hidden;
+    position: relative;
+    background: #0f0404;
+    box-shadow: 0 0 0 6px #222, 0 0 0 10px #1a1a1a, 0 24px 60px rgba(0,0,0,0.8);
+  }
+
+  /* ── Colours matching the firmware ───────────────────────────── */
+  /* C_BG    #0f0404   C_RED   #dc3030
+     C_MID   #8c1e1e   C_DIM   #410e0e   C_TRACK #260909 */
+
+  /* ── Page dots ────────────────────────────────────────────────── */
+  .dots {
+    position: absolute;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    z-index: 10;
+  }
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #410e0e;
+  }
+  .dot.active { background: #dc3030; }
+
+  /* ── Screen: Clock ─────────────────────────────────────────────── */
+  .clock-face {
+    position: absolute;
+    width: 310px; height: 310px;
+    border-radius: 50%;
+    border: 2px solid #410e0e;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+  }
+  .clock-center {
+    position: absolute;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: #dc3030;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 5;
+  }
+
+  /* ── Screen: Alarm ─────────────────────────────────────────────── */
+  .alarm-title {
+    position: absolute;
+    top: 40px; left: 50%;
+    transform: translateX(-50%);
+    color: #8c1e1e;
+    font-size: 16px;
+    letter-spacing: 0.18em;
+  }
+  .alarm-time {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-20px);
+    color: #dc3030;
+    font-size: 64px;
+    font-weight: 300;
+    letter-spacing: 0.04em;
+  }
+  .alarm-blocked {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(34px);
+    color: #dc3030;
+    font-size: 20px;
+    text-align: center;
+    width: 340px;
+    line-height: 1.5;
+  }
+
+  /* ── Screen: Guide ─────────────────────────────────────────────── */
+  .guide-question {
+    position: absolute;
+    left: 50px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 185px;
+    color: #8c1e1e;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1.55;
+  }
+  .guide-sel-bar {
+    position: absolute;
+    left: 236px;
+    width: 216px;
+    height: 38px;
+    top: 202px;
+    background: rgba(65,14,14,0.50);
+    border-radius: 6px;
+  }
+  .guide-list {
+    position: absolute;
+    left: 238px;
+    width: 212px;
+    top: 0;
+  }
+  .guide-item {
+    position: absolute;
+    width: 212px;
+    color: #dc3030;
+    font-size: 20px;
+    font-weight: 400;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  /* ── Screen: Wind-down ─────────────────────────────────────────── */
+  .wind-question {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-88px);
+    color: #8c1e1e;
+    font-size: 20px;
+    text-align: center;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .wind-arc-track {
+    position: absolute;
+    width: 390px; height: 390px;
+    border-radius: 50%;
+    border: 22px solid #260909;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+  }
+  .wind-arc-svg {
+    position: absolute;
+    width: 390px; height: 390px;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%) rotate(-90deg);
+  }
+  .wind-min {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-16px);
+    color: #dc3030;
+    font-size: 64px;
+    font-weight: 300;
+  }
+  .wind-sub {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(28px);
+    color: #8c1e1e;
+    font-size: 20px;
+  }
+
+  /* ── Screen: Heart coherence ───────────────────────────────────── */
+  .breath-label {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    color: #dc3030;
+    font-size: 48px;
+    font-weight: 300;
+    white-space: nowrap;
+  }
+
+  /* ── Screen: Connect ───────────────────────────────────────────── */
+  .connect-card {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-20px);
+    width: 320px;
+    background: rgba(65,14,14,0.35);
+    border: 1px solid #410e0e;
+    border-radius: 14px;
+    padding: 28px 24px;
+    text-align: center;
+  }
+  .connect-prompt {
+    color: #dc3030;
+    font-size: 20px;
+    font-weight: 300;
+    line-height: 1.55;
+  }
+  .connect-counter {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(110px);
+    color: #410e0e;
+    font-size: 13px;
+    letter-spacing: 0.15em;
+  }
+  .connect-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%) translateY(-20px);
+    color: #410e0e;
+    font-size: 22px;
+  }
+  .connect-nav.left  { left:  34px; }
+  .connect-nav.right { right: 34px; }
+
+  /* ── Screen: Placeholder (Music / Podcast / BGNoise) ─────────── */
+  .placeholder-icon {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-30px);
+    color: #dc3030;
+    font-size: 56px;
+    line-height: 1;
+  }
+  .placeholder-title {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(36px);
+    color: #dc3030;
+    font-size: 16px;
+    letter-spacing: 0.16em;
+  }
+  .placeholder-sub {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(64px);
+    color: #8c1e1e;
+    font-size: 13px;
+    letter-spacing: 0.10em;
+  }
+
+  /* ── Screen: Volume ────────────────────────────────────────────── */
+  .vol-label {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-88px);
+    color: #8c1e1e;
+    font-size: 20px;
+    letter-spacing: 0.12em;
+  }
+  .vol-val {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(-16px);
+    color: #dc3030;
+    font-size: 64px;
+    font-weight: 300;
+    letter-spacing: -0.02em;
+  }
+  .vol-pct {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) translateY(28px);
+    color: #8c1e1e;
+    font-size: 20px;
+  }
+
+  /* ── Screen: Reset ─────────────────────────────────────────────── */
+  .reset-label {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    color: #dc3030;
+    font-size: 20px;
+  }
+
+  /* ── Export button ────────────────────────────────────────────── */
+  #export-btn {
+    position: fixed;
+    top: 18px; right: 20px;
+    z-index: 100;
+    padding: 0.6em 1.6em;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 0.8rem;
+    letter-spacing: 0.15em;
+    background: transparent;
+    border: 1.5px solid #dc3030;
+    color: #dc3030;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, opacity 0.2s;
+  }
+  #export-btn:hover   { background: #dc3030; color: #0f0404; }
+  #export-btn:disabled { opacity: 0.4; cursor: default; }
+
+  #export-progress {
+    position: fixed;
+    top: 60px; right: 20px;
+    z-index: 100;
+    color: #8c1e1e;
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    display: none;
+  }
+
+  /* ── Proximity border overlay ──────────────────────────────────── */
+  .prox-border {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 12px solid #dc3030;
+    opacity: 0.55;
+    pointer-events: none;
+    z-index: 20;
+  }
+</style>
+</head>
+<body>
+
+<button id="export-btn" onclick="exportAll()">Export all screens</button>
+<div id="export-progress"></div>
+
+<!-- ═══════════════ 0 · CLOCK ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_CLOCK (0) — 08:00</h2>
+  <div class="device" id="clock">
+    <div class="clock-face"></div>
+    <div class="clock-center"></div>
+    <canvas id="clock-canvas" width="466" height="466"
+      style="position:absolute;top:0;left:0;"></canvas>
+    <div class="dots" id="dots-clock"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 1 · ALARM ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_ALARM (1) — phone too close</h2>
+  <div class="device">
+    <div class="alarm-title">A L A R M</div>
+    <div class="alarm-time">07:00</div>
+    <div class="alarm-blocked">Your phone is too<br>close to set your alarm.</div>
+    <div class="prox-border"></div>
+    <div class="dots" id="dots-alarm"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 2 · GUIDE ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_GUIDE (2) — guide_sel = 1 (Heart Coherence selected)</h2>
+  <div class="device" id="guide">
+    <div class="guide-question">Do you want a<br>guided<br>wind down?</div>
+    <div class="guide-sel-bar"></div>
+    <div class="guide-list" id="guide-list"></div>
+    <div class="dots" id="dots-guide"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 3 · WIND-DOWN ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_WIND (3) — WIND_SELECTING, 25 min</h2>
+  <div class="device">
+    <div class="wind-question">how long do you<br>want to wind down?</div>
+    <div class="wind-arc-track"></div>
+    <svg class="wind-arc-svg" viewBox="0 0 390 390">
+      <circle id="wind-arc" cx="195" cy="195" r="184"
+        fill="none" stroke="#dc3030" stroke-width="22"
+        stroke-linecap="round"
+        stroke-dasharray="0 1157"
+        stroke-dashoffset="0"/>
+    </svg>
+    <div class="wind-min">25</div>
+    <div class="wind-sub">min</div>
+    <div class="dots" id="dots-wind"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 4 · HEART COHERENCE ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_HEART (4) — Breathe in</h2>
+  <div class="device">
+    <div class="breath-label">Breathe in</div>
+    <div class="dots" id="dots-heart"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 5 · CONNECT ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_CONNECT (5) — conversation card 3 / 12</h2>
+  <div class="device">
+    <div class="connect-nav left">‹</div>
+    <div class="connect-card">
+      <div class="connect-prompt">What's one thing<br>you're looking<br>forward to tomorrow?</div>
+    </div>
+    <div class="connect-nav right">›</div>
+    <div class="connect-counter">3 / 12</div>
+    <div class="dots" id="dots-connect"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 6 · MUSIC ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_MUSIC (6) — placeholder</h2>
+  <div class="device">
+    <div class="placeholder-icon">♪</div>
+    <div class="placeholder-title">S L E E P &nbsp; M U S I C</div>
+    <div class="placeholder-sub">coming soon</div>
+    <div class="dots" id="dots-music"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 7 · PODCAST ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_PODCAST (7) — placeholder</h2>
+  <div class="device">
+    <div class="placeholder-icon">◎</div>
+    <div class="placeholder-title">S L E E P &nbsp; P O D C A S T</div>
+    <div class="placeholder-sub">coming soon</div>
+    <div class="dots" id="dots-podcast"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 8 · BACKGROUND NOISE ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_BGNOISE (8) — playing pink noise</h2>
+  <div class="device">
+    <!-- waveform bars -->
+    <svg style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) translateY(-20px);"
+         width="200" height="60" viewBox="0 0 200 60">
+      <g fill="#dc3030">
+        <rect x="0"   y="20" width="10" height="20" rx="5"/>
+        <rect x="16"  y="10" width="10" height="40" rx="5"/>
+        <rect x="32"  y="5"  width="10" height="50" rx="5"/>
+        <rect x="48"  y="14" width="10" height="32" rx="5"/>
+        <rect x="64"  y="8"  width="10" height="44" rx="5"/>
+        <rect x="80"  y="18" width="10" height="24" rx="5"/>
+        <rect x="96"  y="3"  width="10" height="54" rx="5"/>
+        <rect x="112" y="12" width="10" height="36" rx="5"/>
+        <rect x="128" y="7"  width="10" height="46" rx="5"/>
+        <rect x="144" y="20" width="10" height="20" rx="5"/>
+        <rect x="160" y="10" width="10" height="40" rx="5"/>
+        <rect x="176" y="16" width="10" height="28" rx="5"/>
+      </g>
+    </svg>
+    <div class="placeholder-title" style="transform:translate(-50%,-50%) translateY(52px);">
+      P I N K &nbsp; N O I S E
+    </div>
+    <div class="dots" id="dots-bgnoise"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 9 · VOLUME ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_VOLUME (9) — 60%</h2>
+  <div class="device">
+    <div class="vol-label">V O L U M E</div>
+    <div class="wind-arc-track"></div>
+    <svg class="wind-arc-svg" viewBox="0 0 390 390" id="vol-svg">
+      <circle id="vol-arc" cx="195" cy="195" r="184"
+        fill="none" stroke="#dc3030" stroke-width="22"
+        stroke-linecap="round"
+        stroke-dasharray="0 1157"
+        stroke-dashoffset="0"/>
+    </svg>
+    <div class="vol-val">60</div>
+    <div class="vol-pct">%</div>
+    <div class="dots" id="dots-volume"></div>
+  </div>
+</div>
+
+<!-- ═══════════════ 10 · RESET ═══════════════ -->
+<div class="device-wrap">
+  <h2>SCR_RESET (10)</h2>
+  <div class="device">
+    <div class="reset-label">Press to reset</div>
+    <div class="dots" id="dots-reset"></div>
+  </div>
+</div>
+
+<script>
+/* ── Guide list ─────────────────────────────────────────────────────────── */
+const GUIDE_NAMES   = ['Im good','Heart Coherence','Connect','Background noise','Music','Podcast'];
+const GUIDE_LIST_CY = 221;
+const SPACING       = 52;
+const guide_sel     = 1;  /* Heart Coherence */
+
+const list = document.getElementById('guide-list');
+GUIDE_NAMES.forEach((name, i) => {
+  const el   = document.createElement('div');
+  el.className = 'guide-item';
+  el.textContent = name;
+  const dist = Math.abs(i - guide_sel);
+  const opa  = dist === 0 ? 1 : dist === 1 ? 0.7 : 0.4;
+  const y    = GUIDE_LIST_CY + (i - guide_sel) * SPACING - 10;
+  el.style.top     = y + 'px';
+  el.style.opacity = opa;
+  list.appendChild(el);
+});
+
+/* ── Clock canvas ───────────────────────────────────────────────────────── */
+const canvas = document.getElementById('clock-canvas');
+const ctx    = canvas.getContext('2d');
+const CX = 233, CY = 233;
+
+for (let i = 0; i < 12; i++) {
+  const angle = i * 30 * Math.PI / 180 - Math.PI / 2;
+  const r     = 155;
+  const x     = CX + r * Math.cos(angle);
+  const y     = CY + r * Math.sin(angle);
+  const sz    = (i % 3 === 0) ? 8 : 4;
+  ctx.beginPath();
+  ctx.arc(x, y, sz / 2, 0, Math.PI * 2);
+  ctx.fillStyle = (i % 3 === 0) ? '#8c1e1e' : '#410e0e';
+  ctx.fill();
+}
+
+function drawHand(angleDeg, len, width, color) {
+  const a = angleDeg * Math.PI / 180;
+  ctx.beginPath();
+  ctx.moveTo(CX, CY);
+  ctx.lineTo(CX + len * Math.cos(a), CY + len * Math.sin(a));
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = width;
+  ctx.lineCap     = 'round';
+  ctx.stroke();
+}
+/* 08:00 → hour: 8/12*360 - 90 = 150°, minute: -90° */
+drawHand(150, 85,  5, '#dc3030');
+drawHand(-90, 130, 3, '#dc3030');
+
+/* ── Wind-down arc: 25 / 60 ─────────────────────────────────────────────── */
+const circ    = 2 * Math.PI * 184;
+const fracW   = 25 / 60;
+document.getElementById('wind-arc').setAttribute(
+  'stroke-dasharray', `${circ * fracW} ${circ * (1 - fracW)}`);
+
+/* ── Volume arc: 60 / 100 ───────────────────────────────────────────────── */
+const fracV = 60 / 100;
+document.getElementById('vol-arc').setAttribute(
+  'stroke-dasharray', `${circ * fracV} ${circ * (1 - fracV)}`);
+
+/* ── Page dots ──────────────────────────────────────────────────────────── */
+const NUM_SCREENS = 11;
+const activeMap = {
+  'dots-clock'   : 0,
+  'dots-alarm'   : 1,
+  'dots-guide'   : 2,
+  'dots-wind'    : 3,
+  'dots-heart'   : 4,
+  'dots-connect' : 5,
+  'dots-music'   : 6,
+  'dots-podcast' : 7,
+  'dots-bgnoise' : 8,
+  'dots-volume'  : 9,
+  'dots-reset'   : 10
+};
+
+Object.entries(activeMap).forEach(([id, active]) => {
+  const row = document.getElementById(id);
+  if (!row) return;
+  for (let i = 0; i < NUM_SCREENS; i++) {
+    const d = document.createElement('div');
+    d.className = 'dot' + (i === active ? ' active' : '');
+    row.appendChild(d);
+  }
+});
+
+/* ── Export all screens as PNG ──────────────────────────────────────────── */
+async function exportAll() {
+  const btn      = document.getElementById('export-btn');
+  const progress = document.getElementById('export-progress');
+  btn.disabled   = true;
+  progress.style.display = 'block';
+
+  const wraps = document.querySelectorAll('.device-wrap');
+
+  for (let i = 0; i < wraps.length; i++) {
+    const wrap   = wraps[i];
+    const device = wrap.querySelector('.device');
+    const label  = wrap.querySelector('h2').textContent
+                       .split('—')[0].trim()          // e.g. "SCR_CLOCK (0) "
+                       .replace(/[^a-z0-9]+/gi, '-')  // slug
+                       .replace(/-+$/, '')
+                       .toLowerCase();
+    const filename = `screen-${String(i).padStart(2,'0')}-${label}.png`;
+
+    progress.textContent = `Exporting ${i + 1} / ${wraps.length}  —  ${filename}`;
+
+    // Scroll element into view so html2canvas can read sub-pixels correctly
+    device.scrollIntoView({ block: 'center' });
+    await new Promise(r => setTimeout(r, 80));   // let scroll settle
+
+    const cvs = await html2canvas(device, {
+      backgroundColor: null,   // transparent outside the circle
+      scale: 2,                 // 2× = 932×932 px output
+      useCORS: true,
+      logging: false
+    });
+
+    // Trigger download
+    const link    = document.createElement('a');
+    link.download = filename;
+    link.href     = cvs.toDataURL('image/png');
+    link.click();
+
+    // Brief pause so the browser doesn't block multiple rapid downloads
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  progress.textContent = `Done — ${wraps.length} files saved.`;
+  btn.disabled = false;
+  setTimeout(() => { progress.style.display = 'none'; }, 3000);
+}
+</script>
+</body>
+</html>
